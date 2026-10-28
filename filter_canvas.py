@@ -53,7 +53,7 @@ class InteractiveResponseCanvas(tk.Canvas):
         self.margin_left = 55
         self.margin_right = 50
         self.margin_top = 25
-        self.margin_bottom = 35
+        self.margin_bottom = 42
 
         # Bindings
         self.bind("<Configure>", self._on_resize)
@@ -348,7 +348,7 @@ class InteractiveResponseCanvas(tk.Canvas):
                     # Labels for 10Hz, 100Hz, 1kHz, 10kHz, 20kHz
                     if is_major or f in (20, 50, 200, 500, 2000, 5000, 20000):
                         lbl = f"{f/1000:.0f}k" if f >= 1000 else f"{f:.0f}"
-                        self.create_text(x, self.margin_top + plot_h + 12, text=lbl,
+                        self.create_text(x, self.margin_top + plot_h + 8, text=lbl,
                                          fill='#57606a', font=('Segoe UI', 8), anchor='n')
 
         # Axis unit labels
@@ -357,8 +357,9 @@ class InteractiveResponseCanvas(tk.Canvas):
         if self.show_phase:
             self.create_text(self.margin_left + plot_w + 10, self.margin_top - 12, text="Phase [°]",
                              fill='#b08800', font=('Segoe UI', 8, 'bold'), anchor='e')
-        self.create_text(self.margin_left + plot_w, self.margin_top + plot_h + 18, text="Freq [Hz]",
-                         fill='#24292f', font=('Segoe UI', 8, 'bold'), anchor='e')
+        # Center frequency axis label to avoid overlapping with right-most tick labels (e.g. 20k)
+        self.create_text(self.margin_left + plot_w / 2, self.margin_top + plot_h + 24, text="Frequency [Hz]",
+                         fill='#24292f', font=('Segoe UI', 8, 'bold'), anchor='n')
 
         # Phase Grid & Axis (Right Side) when enabled
         if self.show_phase:
