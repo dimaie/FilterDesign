@@ -127,6 +127,13 @@ def generate_signal(signal_type: str,
         for i in range(step_idx, num_samples):
             samples[i] = amplitude
 
+    elif 'periodic' in sig_type:
+        period = max(2, int(sample_rate / max(1.0, freq1)))
+        rng = random.Random(42)
+        pbuf = [amplitude * (rng.random() * 2.0 - 1.0) for _ in range(period)]
+        for i in range(num_samples):
+            samples[i] = pbuf[i % period]
+
     else:
         # Default sine
         omega = 2.0 * math.pi * freq1
@@ -267,29 +274,36 @@ class ContinuousSignalGenerator:
         self.pink_state = [0.0] * 7
         self.periodic_noise_buf: List[float] = []
         self.periodic_noise_idx = 0
+        self._lock = threading.Lock()
 
     def set_params(self, signal_type: Optional[str] = None,
                    freq1: Optional[float] = None,
                    freq2: Optional[float] = None,
                    amplitude: Optional[float] = None,
                    sample_rate: Optional[float] = None):
-        if signal_type is not None:
-            self.signal_type = signal_type
-        if freq1 is not None:
-            self.freq1 = max(1.0, float(freq1))
-        if freq2 is not None:
-            self.freq2 = max(1.0, float(freq2))
-        if amplitude is not None:
-            self.amplitude = max(0.0, min(1.0, float(amplitude)))
-        if sample_rate is not None and sample_rate != self.sample_rate:
-            self.sample_rate = float(sample_rate)
-            self.periodic_noise_buf.clear()
+        with self._lock:
+            if signal_type is not None:
+                self.signal_type = signal_type
+            if freq1 is not None:
+                self.freq1 = max(1.0, float(freq1))
+            if freq2 is not None:
+                self.freq2 = max(1.0, float(freq2))
+            if amplitude is not None:
+                self.amplitude = max(0.0, min(1.0, float(amplitude)))
+            if sample_rate is not None and sample_rate != self.sample_rate:
+                self.sample_rate = float(sample_rate)
+                self.periodic_noise_buf.clear()
+                self.periodic_noise_idx = 0
 
     def generate_block(self, num_samples: int) -> Tuple[List[float], List[float]]:
         """
         Generate next contiguous block of samples.
         Returns (time_block, samples_block).
         """
+        with self._lock:
+            return self._generate_block_locked(num_samples)
+
+    def _generate_block_locked(self, num_samples: int) -> Tuple[List[float], List[float]]:
         sr = self.sample_rate
         dt = 1.0 / sr
         f1 = self.freq1
@@ -482,6 +496,43 @@ class ContinuousAudioEngine:
                 self._ctypes = ctypes
                 self._winmm = ctypes.windll.winmm
                 self._kernel32 = ctypes.windll.kernel32
+
+                # Configure kernel32 function signatures for 64-bit safe execution
+                self._kernel32.CreateEventW.restype = ctypes.c_void_p
+                self._kernel32.CreateEventW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_wchar_p]
+
+                self._kernel32.WaitForSingleObject.restype = ctypes.c_ulong
+                self._kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+
+                self._kernel32.CloseHandle.restype = ctypes.c_int
+                self._kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+
+                # Configure winmm function signatures for 64-bit safe execution
+                self._winmm.waveOutOpen.restype = ctypes.c_uint
+                self._winmm.waveOutOpen.argtypes = [
+                    ctypes.POINTER(ctypes.c_void_p),
+                    ctypes.c_uint,
+                    ctypes.c_void_p,
+                    ctypes.c_void_p,
+                    ctypes.c_void_p,
+                    ctypes.c_ulong
+                ]
+
+                self._winmm.waveOutPrepareHeader.restype = ctypes.c_uint
+                self._winmm.waveOutPrepareHeader.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint]
+
+                self._winmm.waveOutWrite.restype = ctypes.c_uint
+                self._winmm.waveOutWrite.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint]
+
+                self._winmm.waveOutUnprepareHeader.restype = ctypes.c_uint
+                self._winmm.waveOutUnprepareHeader.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint]
+
+                self._winmm.waveOutReset.restype = ctypes.c_uint
+                self._winmm.waveOutReset.argtypes = [ctypes.c_void_p]
+
+                self._winmm.waveOutClose.restype = ctypes.c_uint
+                self._winmm.waveOutClose.argtypes = [ctypes.c_void_p]
+
                 self._winmm_available = True
         except Exception:
             self._winmm_available = False
@@ -567,7 +618,8 @@ class ContinuousAudioEngine:
             self._event = self._kernel32.CreateEventW(None, False, False, None)
             hwave = ct.c_void_p()
             CALLBACK_EVENT = 0x00050000
-            res = self._winmm.waveOutOpen(ct.byref(hwave), -1, ct.byref(wfx), self._event, 0, CALLBACK_EVENT)
+            WAVE_MAPPER = 0xFFFFFFFF
+            res = self._winmm.waveOutOpen(ct.byref(hwave), WAVE_MAPPER, ct.byref(wfx), self._event, 0, CALLBACK_EVENT)
             if res != 0:
                 self._kernel32.CloseHandle(self._event)
                 self._event = None
@@ -624,8 +676,10 @@ class ContinuousAudioEngine:
                     break
                 self._kernel32.WaitForSingleObject(self._event, 50)
             if raw_buf is None:
-                raw_buf, hdr = self._buffers[0]
+                # All buffers are currently busy in audio hardware DMA; skip to avoid corruption
+                return
 
+        hdr.dwFlags &= ~WHDR_DONE
         pcm = bytearray(self.block_size * 2)
         v_scale = max(0.0, min(1.0, volume)) * 32767.0
         for i in range(self.block_size):

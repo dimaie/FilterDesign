@@ -221,6 +221,45 @@ class TestFilterEngine(unittest.TestCase):
         self.assertEqual(reason, "")
 
 
+    def test_chebyshev2_filter_cutoff(self):
+        # 4th-order Chebyshev II LPF at 1000 Hz, 40 dB stopband attenuation
+        filt = DigitalFilter('LPF', 'Chebyshev II', order=4, sample_rate=48000, f_cutoff=1000, stopband_db=40)
+        freqs = [100.0, 1000.0, 4000.0]
+        mags, _, _ = filt.frequency_response(freqs)
+        # Passband should be ~0 dB
+        self.assertAlmostEqual(mags[0], 0.0, delta=0.2)
+        # At cutoff, gain must be ~ -3.0 dB
+        self.assertAlmostEqual(mags[1], -3.01, delta=0.5)
+        # Stopband must be strongly attenuated
+        self.assertLess(mags[2], -39.0)
+
+    def test_chebyshev1_even_order_gain_normalization(self):
+        # Even-order Chebyshev I for HPF, BPF, and BSF must not exceed 0 dB in the passband
+        for ftype in ['HPF', 'BPF', 'BSF']:
+            filt = DigitalFilter(ftype, 'Chebyshev I', order=4, sample_rate=48000,
+                                 f_cutoff=1000, f_cutoff2=4000, ripple_db=2.0)
+            probe_freqs = [f for f in range(50, 23500, 100)]
+            mags, _, _ = filt.frequency_response(probe_freqs)
+            self.assertLessEqual(max(mags), 0.05, f"Filter {ftype} exceeded 0 dB: max={max(mags):.2f}")
+
+    def test_iir_criteria_match_near_nyquist(self):
+        # Cutoff at 15 kHz is well below Nyquist * 0.98 (23.52 kHz), should not trigger false warning
+        filt = DigitalFilter('LPF', 'Butterworth', order=4, sample_rate=48000, f_cutoff=15000)
+        matched, reason = filt.check_criteria_match(15000)
+        self.assertTrue(matched, f"Unexpected mismatch: {reason}")
+
+        # Cutoff at 23.6 kHz is too close to Nyquist (24 kHz)
+        matched, reason = filt.check_criteria_match(23600)
+        self.assertFalse(matched)
+        self.assertIn("too close to Nyquist", reason)
+
+    def test_fir_narrowband_peak_normalization(self):
+        # Narrowband BPF with 511 taps must have maximum passband gain <= 0.05 dB
+        fir = FIRFilter('BPF', 511, 48000, 1000, f_cutoff2=1060, window_name='Hamming')
+        probe_freqs = [980.0, 1000.0, 1030.0, 1060.0, 1080.0]
+        mags, _, _ = fir.frequency_response(probe_freqs)
+        self.assertLessEqual(max(mags), 0.05, f"FIR BPF exceeded 0 dB: {max(mags):.2f} dB")
+
 class TestSignalTestbench(unittest.TestCase):
     def test_audio_to_wav_bytes_applies_volume(self):
         wav_data = audio_to_wav_bytes([0.5], 48000, volume=0.5)
@@ -304,6 +343,15 @@ class TestSignalTestbench(unittest.TestCase):
 
         engine.stop()
 
+
+    def test_periodic_noise_signal_generation(self):
+        t, x = generate_signal('periodic noise', duration_sec=0.05, sample_rate=48000, freq1=500.0)
+        self.assertEqual(len(t), int(0.05 * 48000))
+        self.assertEqual(len(x), int(0.05 * 48000))
+        period = int(48000 / 500)
+        # Check periodicity
+        for i in range(period, period * 3):
+            self.assertAlmostEqual(x[i], x[i % period], places=6)
 
 if __name__ == "__main__":
     unittest.main()

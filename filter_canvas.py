@@ -193,7 +193,20 @@ class InteractiveResponseCanvas(tk.Canvas):
         if self.margin_left <= event.x <= (self.winfo_width() - self.margin_right) and \
            self.margin_top <= event.y <= (self.winfo_height() - self.margin_bottom):
             cur_f = self.x_to_f(event.x)
-            cur_db = self.y_to_db(event.y)
+            cur_db = None
+            if self.freq_points and self.mag_points:
+                # Interpolate filter curve magnitude at cur_f
+                for i in range(len(self.freq_points) - 1):
+                    f0, f1 = self.freq_points[i], self.freq_points[i + 1]
+                    if f0 <= cur_f <= f1:
+                        t = (cur_f - f0) / max(1e-9, f1 - f0)
+                        cur_db = self.mag_points[i] + t * (self.mag_points[i + 1] - self.mag_points[i])
+                        break
+                if cur_db is None and self.freq_points:
+                    cur_db = self.mag_points[-1] if cur_f >= self.freq_points[-1] else self.mag_points[0]
+            if cur_db is None:
+                cur_db = self.y_to_db(event.y)
+
             cur_phase = None
             if self.show_phase and self.freq_points and self.phase_points:
                 # Interpolate phase at cur_f
@@ -264,7 +277,7 @@ class InteractiveResponseCanvas(tk.Canvas):
                              text=f"⚠️ {self.mismatch_reason}",
                              fill='#a40e26', font=('Segoe UI', 8, 'bold'), anchor='w')
 
-        # Draw Tooltip
+        # Draw Tooltip (offset below criteria mismatch banner if banner is active)
         if self.hover_info:
             f_val, db_val, phase_val = self.hover_info
             if phase_val is not None:
@@ -273,10 +286,11 @@ class InteractiveResponseCanvas(tk.Canvas):
             else:
                 text = f"{f_val:,.1f} Hz | {db_val:+.1f} dB"
                 box_w = 160
-            self.create_rectangle(self.margin_left + 10, self.margin_top + 10,
-                                  self.margin_left + 10 + box_w, self.margin_top + 32,
+            tooltip_y = (self.margin_top + 36) if (not self.criteria_met and self.mismatch_reason) else (self.margin_top + 10)
+            self.create_rectangle(self.margin_left + 10, tooltip_y,
+                                  self.margin_left + 10 + box_w, tooltip_y + 22,
                                   fill='#ffffff', outline='#0969da', width=1)
-            self.create_text(self.margin_left + 10 + box_w / 2, self.margin_top + 21,
+            self.create_text(self.margin_left + 10 + box_w / 2, tooltip_y + 11,
                              text=text, fill='#24292f', font=('Segoe UI', 9, 'bold'))
 
     def _draw_zones(self, plot_h):

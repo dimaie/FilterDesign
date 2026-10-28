@@ -19,8 +19,7 @@ Features:
 
 import os
 import math
-import tempfile
-from typing import Optional, List
+from typing import Optional
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
@@ -258,26 +257,31 @@ class FilterDesignApp(tk.Tk):
         self.entry_ripple = ttk.Entry(self.frame_dynamic_params, width=8)
         self.entry_ripple.insert(0, "0.5")
         self.entry_ripple.bind("<Return>", self._on_param_changed)
+        self.entry_ripple.bind("<FocusOut>", self._on_param_changed)
 
         self.lbl_stopband = ttk.Label(self.frame_dynamic_params, text="Stopband Atten (dB):", style='Card.TLabel')
         self.entry_stopband = ttk.Entry(self.frame_dynamic_params, width=8)
         self.entry_stopband.insert(0, "40.0")
         self.entry_stopband.bind("<Return>", self._on_param_changed)
+        self.entry_stopband.bind("<FocusOut>", self._on_param_changed)
 
         self.lbl_kaiser = ttk.Label(self.frame_dynamic_params, text="Kaiser Beta:", style='Card.TLabel')
         self.entry_kaiser = ttk.Entry(self.frame_dynamic_params, width=8)
         self.entry_kaiser.insert(0, "5.0")
         self.entry_kaiser.bind("<Return>", self._on_param_changed)
+        self.entry_kaiser.bind("<FocusOut>", self._on_param_changed)
 
         self.lbl_gaussian = ttk.Label(self.frame_dynamic_params, text="Gaussian Sigma (0.1 - 1.0):", style='Card.TLabel')
         self.entry_gaussian = ttk.Entry(self.frame_dynamic_params, width=8)
         self.entry_gaussian.insert(0, "0.4")
         self.entry_gaussian.bind("<Return>", self._on_param_changed)
+        self.entry_gaussian.bind("<FocusOut>", self._on_param_changed)
 
         self.lbl_tukey = ttk.Label(self.frame_dynamic_params, text="Tukey Alpha (0.0 - 1.0):", style='Card.TLabel')
         self.entry_tukey = ttk.Entry(self.frame_dynamic_params, width=8)
         self.entry_tukey.insert(0, "0.5")
         self.entry_tukey.bind("<Return>", self._on_param_changed)
+        self.entry_tukey.bind("<FocusOut>", self._on_param_changed)
 
         # Checkbox for Phase curve
         self.var_show_phase = tk.BooleanVar(value=False)
@@ -448,8 +452,9 @@ class FilterDesignApp(tk.Tk):
         top_bar = ttk.Frame(parent, padding=8)
         top_bar.pack(side=tk.TOP, fill=tk.X)
 
-        ttk.Label(top_bar, text="Pure ANSI C99 Code (Direct Form II Transposed Biquad Cascade - Zero External Dependencies)",
-                  font=('Segoe UI', 9, 'bold'), foreground='#1a7f37').pack(side=tk.LEFT)
+        self.lbl_code_title = ttk.Label(top_bar, text="Pure ANSI C99 Code (Direct Form II Transposed Biquad Cascade - Zero External Dependencies)",
+                                            font=('Segoe UI', 9, 'bold'), foreground='#1a7f37')
+        self.lbl_code_title.pack(side=tk.LEFT)
 
         btn_copy = ttk.Button(top_bar, text="📋 Copy Code to Clipboard", style='Accent.TButton',
                               command=self._copy_c_code)
@@ -566,9 +571,36 @@ class FilterDesignApp(tk.Tk):
             self.sample_rate = float(self.var_sr.get())
         except ValueError:
             self.sample_rate = 48000.0
+
+        nyquist = self.sample_rate / 2.0
+        max_f = nyquist * 0.98
+
+        if self.f_cutoff > max_f:
+            self.f_cutoff = max_f
+            self.entry_fc1.delete(0, tk.END)
+            self.entry_fc1.insert(0, f"{self.f_cutoff:.1f}")
+
+        if self.f_cutoff2 > max_f:
+            self.f_cutoff2 = max_f
+            self.entry_fc2.delete(0, tk.END)
+            self.entry_fc2.insert(0, f"{self.f_cutoff2:.1f}")
+
+        self._update_slider_pos_from_hz(self.scale_fc1, self.f_cutoff)
+        self._update_slider_pos_from_hz(self.scale_fc2, self.f_cutoff2)
+
+        try:
+            test_f1 = float(self.var_test_f1.get())
+            if test_f1 > max_f:
+                test_f1 = max_f
+                self.var_test_f1.set(f"{test_f1:.1f}")
+            self._update_slider_pos_from_hz(self.scale_test_f1, test_f1)
+        except (ValueError, AttributeError):
+            pass
+
         if hasattr(self, 'audio_engine'):
             self.audio_engine.set_sample_rate(self.sample_rate)
         self.recalculate_filter()
+        self.run_test_signal()
 
     def _update_dynamic_param_visibility(self):
         self.lbl_ripple.pack_forget()
@@ -878,8 +910,9 @@ class FilterDesignApp(tk.Tk):
             )
         else:
             biquad_count = len(self.current_filter.sections)
+            total_poles = sum(2 if abs(sec.a2) > 1e-9 else 1 for sec in self.current_filter.sections)
             self.lbl_stats.config(
-                text=f"Sections: {biquad_count} Biquad(s) | Sample Rate: {int(self.sample_rate)} Hz | Total Poles: {biquad_count * 2}",
+                text=f"Sections: {biquad_count} Biquad(s) | Sample Rate: {int(self.sample_rate)} Hz | Total Poles: {total_poles}",
                 foreground='#0969da'
             )
 
@@ -896,6 +929,11 @@ class FilterDesignApp(tk.Tk):
     def _update_c_code_text(self):
         if not self.current_filter:
             return
+        if hasattr(self, 'lbl_code_title'):
+            if getattr(self.current_filter, 'filter_family', 'IIR') == 'FIR':
+                self.lbl_code_title.config(text="Pure ANSI C99 Code (Direct Form Circular Delay-Line FIR - Zero External Dependencies)")
+            else:
+                self.lbl_code_title.config(text="Pure ANSI C99 Code (Direct Form II Transposed Biquad Cascade - Zero External Dependencies)")
         code = self.current_filter.generate_c_code("dsp_filter")
         self.text_code.delete("1.0", tk.END)
         self.text_code.insert(tk.END, code)
@@ -1200,23 +1238,26 @@ class FilterDesignApp(tk.Tk):
                                              filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")],
                                              initialfile="filter_test_data.csv")
         if fpath:
-            sig_type = self.var_test_sig.get()
-            try:
-                f1 = float(self.var_test_f1.get())
-            except ValueError:
-                f1 = 500.0
-            try:
-                f2 = float(self.var_test_f2.get())
-            except ValueError:
-                f2 = 5000.0
-            t_vec, in_vec = generate_signal(sig_type, duration_sec=0.2, sample_rate=self.sample_rate,
-                                            freq1=f1, freq2=f2, amplitude=0.8)
-            if self.current_filter:
-                f_clone = self.current_filter.clone()
-                f_clone.reset()
-                out_vec = f_clone.process_block(in_vec)
+            if getattr(self, 'test_in', None) and getattr(self, 'test_out', None) and len(self.test_out) > 0:
+                t_vec, in_vec, out_vec = self.test_time, self.test_in, self.test_out
             else:
-                out_vec = in_vec
+                sig_type = self.var_test_sig.get()
+                try:
+                    f1 = float(self.var_test_f1.get())
+                except ValueError:
+                    f1 = 500.0
+                try:
+                    f2 = float(self.var_test_f2.get())
+                except ValueError:
+                    f2 = 5000.0
+                t_vec, in_vec = generate_signal(sig_type, duration_sec=0.2, sample_rate=self.sample_rate,
+                                                freq1=f1, freq2=f2, amplitude=0.8)
+                if self.current_filter:
+                    f_clone = self.current_filter.clone()
+                    f_clone.reset()
+                    out_vec = f_clone.process_block(in_vec)
+                else:
+                    out_vec = in_vec
             export_data_to_csv(fpath, t_vec, in_vec, out_vec)
             messagebox.showinfo("Export Successful", f"Test data saved to:\n{fpath}")
 
@@ -1228,30 +1269,38 @@ class FilterDesignApp(tk.Tk):
                                              filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")],
                                              initialfile="filter_test_data.json")
         if fpath:
-            sig_type = self.var_test_sig.get()
-            try:
-                f1 = float(self.var_test_f1.get())
-            except ValueError:
-                f1 = 500.0
-            try:
-                f2 = float(self.var_test_f2.get())
-            except ValueError:
-                f2 = 5000.0
-            t_vec, in_vec = generate_signal(sig_type, duration_sec=0.2, sample_rate=self.sample_rate,
-                                            freq1=f1, freq2=f2, amplitude=0.8)
-            f_clone = self.current_filter.clone()
-            f_clone.reset()
-            out_vec = f_clone.process_block(in_vec)
+            if getattr(self, 'test_in', None) and getattr(self, 'test_out', None) and len(self.test_out) > 0:
+                t_vec, in_vec, out_vec = self.test_time, self.test_in, self.test_out
+            else:
+                sig_type = self.var_test_sig.get()
+                try:
+                    f1 = float(self.var_test_f1.get())
+                except ValueError:
+                    f1 = 500.0
+                try:
+                    f2 = float(self.var_test_f2.get())
+                except ValueError:
+                    f2 = 5000.0
+                t_vec, in_vec = generate_signal(sig_type, duration_sec=0.2, sample_rate=self.sample_rate,
+                                                freq1=f1, freq2=f2, amplitude=0.8)
+                f_clone = self.current_filter.clone()
+                f_clone.reset()
+                out_vec = f_clone.process_block(in_vec)
             meta = {
+                "filter_family": getattr(self.current_filter, 'filter_family', 'IIR'),
                 "filter_type": self.filter_type,
                 "response_type": self.response_type,
-                "order": self.order,
+                "order": self.current_filter.order,
                 "sample_rate": self.sample_rate,
                 "f_cutoff": self.f_cutoff,
-                "f_cutoff2": self.f_cutoff2,
-                "ripple_db": self.ripple_db,
-                "stopband_db": self.stopband_db
+                "f_cutoff2": self.f_cutoff2
             }
+            if getattr(self.current_filter, 'filter_family', 'IIR') == 'FIR':
+                meta["num_taps"] = getattr(self.current_filter, 'num_taps', self.fir_taps)
+                meta["fir_window"] = getattr(self.current_filter, 'response_type', self.fir_window)
+            else:
+                meta["ripple_db"] = self.ripple_db
+                meta["stopband_db"] = self.stopband_db
             export_data_to_json(fpath, meta, t_vec, in_vec, out_vec)
             messagebox.showinfo("Export Successful", f"JSON data saved to:\n{fpath}")
 
@@ -1263,23 +1312,26 @@ class FilterDesignApp(tk.Tk):
                                              filetypes=[("WAV Audio Files", "*.wav"), ("All Files", "*.*")],
                                              initialfile="filtered_signal.wav")
         if fpath:
-            sig_type = self.var_test_sig.get()
-            try:
-                f1 = float(self.var_test_f1.get())
-            except ValueError:
-                f1 = 500.0
-            try:
-                f2 = float(self.var_test_f2.get())
-            except ValueError:
-                f2 = 5000.0
-            _, in_vec = generate_signal(sig_type, duration_sec=1.0, sample_rate=self.sample_rate,
-                                        freq1=f1, freq2=f2, amplitude=0.8)
-            if self.current_filter:
-                f_clone = self.current_filter.clone()
-                f_clone.reset()
-                out_vec = f_clone.process_block(in_vec)
+            if getattr(self, 'test_out', None) and len(self.test_out) > 0:
+                out_vec = self.test_out
             else:
-                out_vec = in_vec
+                sig_type = self.var_test_sig.get()
+                try:
+                    f1 = float(self.var_test_f1.get())
+                except ValueError:
+                    f1 = 500.0
+                try:
+                    f2 = float(self.var_test_f2.get())
+                except ValueError:
+                    f2 = 5000.0
+                _, in_vec = generate_signal(sig_type, duration_sec=1.0, sample_rate=self.sample_rate,
+                                            freq1=f1, freq2=f2, amplitude=0.8)
+                if self.current_filter:
+                    f_clone = self.current_filter.clone()
+                    f_clone.reset()
+                    out_vec = f_clone.process_block(in_vec)
+                else:
+                    out_vec = in_vec
             export_audio_to_wav(fpath, out_vec, int(self.sample_rate))
             messagebox.showinfo("Export Successful", f"WAV Audio saved to:\n{fpath}")
 
