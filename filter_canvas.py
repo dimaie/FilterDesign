@@ -20,7 +20,7 @@ class InteractiveResponseCanvas(tk.Canvas):
     - Hover coordinate tooltip
     """
     def __init__(self, master, on_cutoff_dragged: Optional[Callable[[float, Optional[float]], None]] = None, **kwargs):
-        super().__init__(master, bg='#181a1f', highlightthickness=0, **kwargs)
+        super().__init__(master, bg='#ffffff', highlightthickness=0, **kwargs)
         self.on_cutoff_dragged = on_cutoff_dragged
 
         # Frequency and Plot ranges
@@ -43,7 +43,7 @@ class InteractiveResponseCanvas(tk.Canvas):
 
         # Dragging state
         self.drag_target: Optional[str] = None  # 'fc1', 'fc2', or None
-        self.hover_info: Optional[Tuple[float, float]] = None
+        self.hover_info: Optional[Tuple[float, float, Optional[float]]] = None
 
         # Margins for axes
         self.margin_left = 55
@@ -221,7 +221,7 @@ class InteractiveResponseCanvas(tk.Canvas):
         # Plot background
         self.create_rectangle(self.margin_left, self.margin_top,
                               self.margin_left + plot_w, self.margin_top + plot_h,
-                              fill='#21252b', outline='#2c313a', width=1)
+                              fill='#ffffff', outline='#d0d7de', width=1)
 
         # Draw Passband/Stopband Shading
         self._draw_zones(plot_h)
@@ -251,9 +251,9 @@ class InteractiveResponseCanvas(tk.Canvas):
                 box_w = 160
             self.create_rectangle(self.margin_left + 10, self.margin_top + 10,
                                   self.margin_left + 10 + box_w, self.margin_top + 32,
-                                  fill='#282c34', outline='#61afef', width=1)
+                                  fill='#ffffff', outline='#0969da', width=1)
             self.create_text(self.margin_left + 10 + box_w / 2, self.margin_top + 21,
-                             text=text, fill='#abb2bf', font=('Segoe UI', 9, 'bold'))
+                             text=text, fill='#24292f', font=('Segoe UI', 9, 'bold'))
 
     def _draw_zones(self, plot_h):
         """Draw subtle translucent background shading for passbands."""
@@ -263,32 +263,32 @@ class InteractiveResponseCanvas(tk.Canvas):
         if self.filter_type == 'LPF':
             x1 = self.margin_left
             x2 = self.f_to_x(self.fc1)
-            self.create_rectangle(x1, top, x2, bot, fill='#1b3028', outline='', width=0)
+            self.create_rectangle(x1, top, x2, bot, fill='#e8f5e9', outline='', width=0)
         elif self.filter_type == 'HPF':
             x1 = self.f_to_x(self.fc1)
             x2 = self.winfo_width() - self.margin_right
-            self.create_rectangle(x1, top, x2, bot, fill='#1b3028', outline='', width=0)
+            self.create_rectangle(x1, top, x2, bot, fill='#e8f5e9', outline='', width=0)
         elif self.filter_type == 'BPF':
             x1 = self.f_to_x(self.fc1)
             x2 = self.f_to_x(self.fc2)
-            self.create_rectangle(x1, top, x2, bot, fill='#1b3028', outline='', width=0)
+            self.create_rectangle(x1, top, x2, bot, fill='#e8f5e9', outline='', width=0)
         elif self.filter_type == 'BSF':
             x1 = self.f_to_x(self.fc1)
             x2 = self.f_to_x(self.fc2)
-            self.create_rectangle(x1, top, x2, bot, fill='#332222', outline='', width=0)
+            self.create_rectangle(x1, top, x2, bot, fill='#ffebee', outline='', width=0)
 
     def _draw_grid(self, plot_w, plot_h):
         # dB Grid (Horizontal)
         for db in [-80, -60, -40, -20, -10, -6, -3, 0, 10]:
             if self.db_min <= db <= self.db_max:
                 y = self.db_to_y(db)
-                color = '#5c6370' if db == 0 else '#2c313a'
+                color = '#57606a' if db == 0 else '#e1e4e8'
                 dash = () if db == 0 else (2, 4)
                 self.create_line(self.margin_left, y, self.margin_left + plot_w, y,
                                  fill=color, dash=dash, width=1)
                 # Label
                 self.create_text(self.margin_left - 8, y, text=f"{db:d}",
-                                 fill='#7f848e' if db != 0 else '#98c379',
+                                 fill='#57606a' if db != 0 else '#1a7f37',
                                  font=('Segoe UI', 8), anchor='e')
 
         # Frequency Grid (Vertical Decades & Sub-decades)
@@ -300,7 +300,7 @@ class InteractiveResponseCanvas(tk.Canvas):
                 if self.f_min <= f <= self.f_max:
                     x = self.f_to_x(f)
                     is_major = (m == 1)
-                    color = '#3b4048' if is_major else '#262a30'
+                    color = '#d0d7de' if is_major else '#eaeef2'
                     dash = () if is_major else (2, 4)
                     self.create_line(x, self.margin_top, x, self.margin_top + plot_h,
                                      fill=color, dash=dash, width=1)
@@ -309,25 +309,25 @@ class InteractiveResponseCanvas(tk.Canvas):
                     if is_major or f in (20, 50, 200, 500, 2000, 5000, 20000):
                         lbl = f"{f/1000:.0f}k" if f >= 1000 else f"{f:.0f}"
                         self.create_text(x, self.margin_top + plot_h + 12, text=lbl,
-                                         fill='#7f848e', font=('Segoe UI', 8), anchor='n')
+                                         fill='#57606a', font=('Segoe UI', 8), anchor='n')
 
         # Axis unit labels
         self.create_text(self.margin_left - 10, self.margin_top - 12, text="Gain [dB]",
-                         fill='#abb2bf', font=('Segoe UI', 8, 'bold'), anchor='w')
+                         fill='#24292f', font=('Segoe UI', 8, 'bold'), anchor='w')
         if self.show_phase:
             self.create_text(self.margin_left + plot_w + 10, self.margin_top - 12, text="Phase [°]",
-                             fill='#e5c07b', font=('Segoe UI', 8, 'bold'), anchor='e')
+                             fill='#b08800', font=('Segoe UI', 8, 'bold'), anchor='e')
         self.create_text(self.margin_left + plot_w, self.margin_top + plot_h + 18, text="Freq [Hz]",
-                         fill='#abb2bf', font=('Segoe UI', 8, 'bold'), anchor='e')
+                         fill='#24292f', font=('Segoe UI', 8, 'bold'), anchor='e')
 
         # Phase Grid & Axis (Right Side) when enabled
         if self.show_phase:
             for deg in [-180, -135, -90, -45, 0, 45, 90, 135, 180]:
                 y = self.phase_to_y(deg)
                 self.create_line(self.margin_left + plot_w, y, self.margin_left + plot_w + 5, y,
-                                 fill='#e5c07b', width=1)
+                                 fill='#b08800', width=1)
                 self.create_text(self.margin_left + plot_w + 8, y, text=f"{deg:+d}°" if deg != 0 else "0°",
-                                 fill='#e5c07b', font=('Segoe UI', 8), anchor='w')
+                                 fill='#b08800', font=('Segoe UI', 8), anchor='w')
 
     def _draw_magnitude_curve(self):
         coords = []
@@ -344,9 +344,9 @@ class InteractiveResponseCanvas(tk.Canvas):
             coords.extend([x, y_clamped])
 
         if len(coords) >= 4:
-            # Glow effect with slightly wider line
-            self.create_line(coords, fill='#1b5e3f', width=4, smooth=True)
-            self.create_line(coords, fill='#98c379', width=2, smooth=True)
+            # Subtle glow and clear primary green curve
+            self.create_line(coords, fill='#81c784', width=4, smooth=True)
+            self.create_line(coords, fill='#1b5e20', width=2, smooth=True)
 
     def _draw_phase_curve(self):
         coords = []
@@ -358,7 +358,7 @@ class InteractiveResponseCanvas(tk.Canvas):
             coords.extend([x, y])
 
         if len(coords) >= 4:
-            self.create_line(coords, fill='#e5c07b', width=1.5, dash=(4, 2), smooth=False)
+            self.create_line(coords, fill='#b08800', width=1.5, dash=(4, 2), smooth=False)
 
     def _draw_cutoffs(self, plot_h):
         top = self.margin_top
@@ -372,14 +372,14 @@ class InteractiveResponseCanvas(tk.Canvas):
 
             # Triangular grab handle at top
             poly_top = [x - 8, top - 14, x + 8, top - 14, x + 8, top - 5, x, top, x - 8, top - 5]
-            self.create_polygon(poly_top, fill=color, outline='#ffffff', width=1)
+            self.create_polygon(poly_top, fill=color, outline='#24292f', width=1)
             self.create_text(x, top - 18, text=f"{label}: {f:,.0f}Hz",
                              fill=color, font=('Segoe UI', 8, 'bold'), anchor='s')
 
             # Bottom arrow handle
             poly_bot = [x - 7, bot + 6, x + 7, bot + 6, x, bot]
-            self.create_polygon(poly_bot, fill=color, outline='#ffffff', width=1)
+            self.create_polygon(poly_bot, fill=color, outline='#24292f', width=1)
 
-        draw_cursor(self.fc1, "Fc1" if self.has_two_cutoffs else "Cutoff", "#61afef")
+        draw_cursor(self.fc1, "Fc1" if self.has_two_cutoffs else "Cutoff", "#0969da")
         if self.has_two_cutoffs:
-            draw_cursor(self.fc2, "Fc2", "#e06c75")
+            draw_cursor(self.fc2, "Fc2", "#cf222e")

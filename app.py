@@ -1,6 +1,6 @@
 """
 Audio Filter Design Studio - Main Application GUI
-A modern, dark-themed, desktop application for interactive audio filter design.
+A modern, light-themed desktop application for interactive audio filter design.
 Features:
 1. Filter types: LPF, HPF, BPF, BSF (Notch)
 2. Responses: Butterworth, Chebyshev I, Chebyshev II, Bessel
@@ -36,8 +36,8 @@ class FilterDesignApp(tk.Tk):
         self.geometry("1240x860")
         self.minsize(980, 680)
 
-        # Apply dark theme styling
-        self.configure(bg='#1e2227')
+        # Apply light theme styling
+        self.configure(bg='#f6f8fa')
         self._setup_styles()
 
         # Application State
@@ -72,46 +72,46 @@ class FilterDesignApp(tk.Tk):
         style = ttk.Style(self)
         style.theme_use('clam')
 
-        # Color palette (One Dark inspired)
-        bg = '#1e2227'
-        card_bg = '#21252b'
-        fg = '#abb2bf'
-        accent = '#61afef'
-        active_tab = '#2c313a'
+        # Color palette (Modern Clean Light theme)
+        bg = '#f6f8fa'
+        card_bg = '#ffffff'
+        fg = '#24292f'
+        accent = '#0969da'
+        active_tab = '#ffffff'
 
         style.configure('.', background=bg, foreground=fg, font=('Segoe UI', 9))
         style.configure('TNotebook', background=bg, borderwidth=0)
-        style.configure('TNotebook.Tab', background=card_bg, foreground=fg,
+        style.configure('TNotebook.Tab', background='#eaeef2', foreground='#57606a',
                         padding=[14, 6], font=('Segoe UI', 9, 'bold'))
         style.map('TNotebook.Tab',
-                  background=[('selected', active_tab), ('active', '#282c34')],
-                  foreground=[('selected', accent), ('active', '#ffffff')])
+                  background=[('selected', active_tab), ('active', '#f3f4f6')],
+                  foreground=[('selected', accent), ('active', '#24292f')])
 
         style.configure('TFrame', background=bg)
         style.configure('Card.TFrame', background=card_bg, relief='flat')
         style.configure('TLabel', background=bg, foreground=fg)
         style.configure('Card.TLabel', background=card_bg, foreground=fg)
-        style.configure('Header.TLabel', background=card_bg, foreground='#e5c07b', font=('Segoe UI', 10, 'bold'))
-        style.configure('Title.TLabel', background=bg, foreground='#98c379', font=('Segoe UI', 12, 'bold'))
+        style.configure('Header.TLabel', background=card_bg, foreground='#1f2328', font=('Segoe UI', 10, 'bold'))
+        style.configure('Title.TLabel', background=bg, foreground='#1a7f37', font=('Segoe UI', 12, 'bold'))
 
-        style.configure('TCombobox', fieldbackground='#282c34', background='#282c34',
-                        foreground='#ffffff', arrowcolor=accent, padding=4)
-        style.map('TCombobox', fieldbackground=[('readonly', '#282c34')],
-                  foreground=[('readonly', '#ffffff')])
+        style.configure('TCombobox', fieldbackground='#ffffff', background='#f6f8fa',
+                        foreground='#24292f', arrowcolor='#57606a', padding=4)
+        style.map('TCombobox', fieldbackground=[('readonly', '#ffffff')],
+                  foreground=[('readonly', '#24292f')])
 
-        style.configure('TEntry', fieldbackground='#282c34', foreground='#ffffff', insertcolor='#ffffff')
-        style.configure('TScale', background=card_bg, troughcolor='#181a1f')
+        style.configure('TEntry', fieldbackground='#ffffff', foreground='#24292f', insertcolor='#24292f')
+        style.configure('TScale', background=card_bg, troughcolor='#eaeef2')
 
-        style.configure('Accent.TButton', background='#3e4451', foreground='#ffffff',
+        style.configure('Accent.TButton', background='#eaeef2', foreground='#24292f',
                         font=('Segoe UI', 9, 'bold'), borderwidth=1, padding=5)
         style.map('Accent.TButton',
-                  background=[('pressed', '#61afef'), ('active', '#4b5263')],
-                  foreground=[('pressed', '#000000'), ('active', '#61afef')])
+                  background=[('pressed', '#0969da'), ('active', '#d0d7de')],
+                  foreground=[('pressed', '#ffffff'), ('active', '#0969da')])
 
-        style.configure('Action.TButton', background='#98c379', foreground='#1e2227',
+        style.configure('Action.TButton', background='#1a7f37', foreground='#ffffff',
                         font=('Segoe UI', 9, 'bold'), borderwidth=0, padding=5)
         style.map('Action.TButton',
-                  background=[('pressed', '#7cb342'), ('active', '#b5e890')])
+                  background=[('pressed', '#116329'), ('active', '#2da44e')])
 
     def _build_layout(self):
         # Top Header Bar
@@ -122,7 +122,7 @@ class FilterDesignApp(tk.Tk):
         title_lbl.pack(side=tk.LEFT)
 
         subtitle_lbl = ttk.Label(top_bar, text="— Interactive DSP Biquad Synthesizer & C-Code Generator",
-                                 foreground='#5c6370', font=('Segoe UI', 9, 'italic'))
+                                 foreground='#57606a', font=('Segoe UI', 9, 'italic'))
         subtitle_lbl.pack(side=tk.LEFT, padx=10)
 
         # Main Split: Left Sidebar (Controls) + Right Content (Plots & Tabs)
@@ -161,7 +161,7 @@ class FilterDesignApp(tk.Tk):
         ttk.Label(f_order_row, text="Order:", style='Card.TLabel').pack(side=tk.LEFT)
         self.var_order_val = tk.StringVar(value="4")
         self.lbl_order_num = ttk.Label(f_order_row, textvariable=self.var_order_val,
-                                       foreground='#61afef', font=('Segoe UI', 9, 'bold'))
+                                       foreground='#0969da', font=('Segoe UI', 9, 'bold'))
         self.lbl_order_num.pack(side=tk.RIGHT)
 
         self.scale_order = ttk.Scale(sidebar, from_=1, to=10, style='TScale',
@@ -230,8 +230,8 @@ class FilterDesignApp(tk.Tk):
         # Checkbox for Phase curve
         self.var_show_phase = tk.BooleanVar(value=False)
         chk_phase = tk.Checkbutton(sidebar, text="Show Phase Response", variable=self.var_show_phase,
-                                   bg='#21252b', fg='#abb2bf', selectcolor='#181a1f',
-                                   activebackground='#21252b', activeforeground='#61afef',
+                                   bg='#ffffff', fg='#24292f', selectcolor='#ffffff',
+                                   activebackground='#ffffff', activeforeground='#0969da',
                                    command=self._on_toggle_phase)
         chk_phase.pack(anchor='w', pady=(4, 12))
 
@@ -279,10 +279,10 @@ class FilterDesignApp(tk.Tk):
 
         info_lbl = ttk.Label(banner,
                              text="💡 Hint: Drag the colored vertical cursor handles directly on the graph to set filter cutoffs in real time!",
-                             style='Card.TLabel', foreground='#98c379', font=('Segoe UI', 9, 'bold'))
+                             style='Card.TLabel', foreground='#1a7f37', font=('Segoe UI', 9, 'bold'))
         info_lbl.pack(side=tk.LEFT)
 
-        self.lbl_stats = ttk.Label(banner, text="", style='Card.TLabel', foreground='#61afef')
+        self.lbl_stats = ttk.Label(banner, text="", style='Card.TLabel', foreground='#0969da')
         self.lbl_stats.pack(side=tk.RIGHT)
 
         # Interactive Response Canvas
@@ -335,7 +335,7 @@ class FilterDesignApp(tk.Tk):
         r2.pack(fill=tk.X)
 
         self.lbl_test_metrics = ttk.Label(r2, text="Metrics: Calculating...",
-                                          style='Card.TLabel', foreground='#61afef', font=('Segoe UI', 9))
+                                          style='Card.TLabel', foreground='#0969da', font=('Segoe UI', 9))
         self.lbl_test_metrics.pack(side=tk.LEFT)
 
         btn_save_wav = ttk.Button(r2, text="Export Output to WAV", style='Accent.TButton',
@@ -358,10 +358,10 @@ class FilterDesignApp(tk.Tk):
         header_wave.pack(side=tk.TOP, fill=tk.X)
         ttk.Label(header_wave, text="Time Domain Oscilloscope (Input vs Filtered Output)",
                   style='Header.TLabel').pack(side=tk.LEFT)
-        ttk.Label(header_wave, text="— Cyan: Input Signal  |  Green: Filtered Output",
-                  style='Card.TLabel', foreground='#abb2bf', font=('Segoe UI', 8)).pack(side=tk.LEFT, padx=10)
+        ttk.Label(header_wave, text="— Blue: Input Signal  |  Green: Filtered Output",
+                  style='Card.TLabel', foreground='#57606a', font=('Segoe UI', 8)).pack(side=tk.LEFT, padx=10)
 
-        self.canvas_wave = tk.Canvas(frame_wave, bg='#181a1f', highlightthickness=0)
+        self.canvas_wave = tk.Canvas(frame_wave, bg='#ffffff', highlightthickness=0)
         self.canvas_wave.pack(fill=tk.BOTH, expand=True)
 
         # Lower plot: FFT Frequency Spectrum (Input vs Output)
@@ -372,10 +372,10 @@ class FilterDesignApp(tk.Tk):
         header_fft.pack(side=tk.TOP, fill=tk.X)
         ttk.Label(header_fft, text="Frequency Domain Spectrum (FFT Magnitude)",
                   style='Header.TLabel').pack(side=tk.LEFT)
-        ttk.Label(header_fft, text="— Yellow (dashed): Input Spectrum  |  Green: Filtered Output Spectrum",
-                  style='Card.TLabel', foreground='#abb2bf', font=('Segoe UI', 8)).pack(side=tk.LEFT, padx=10)
+        ttk.Label(header_fft, text="— Amber (dashed): Input Spectrum  |  Green: Filtered Output Spectrum",
+                  style='Card.TLabel', foreground='#57606a', font=('Segoe UI', 8)).pack(side=tk.LEFT, padx=10)
 
-        self.canvas_fft = tk.Canvas(frame_fft, bg='#181a1f', highlightthickness=0)
+        self.canvas_fft = tk.Canvas(frame_fft, bg='#ffffff', highlightthickness=0)
         self.canvas_fft.pack(fill=tk.BOTH, expand=True)
 
     # --- TAB 3: ANSI C CODE GENERATOR ---
@@ -384,7 +384,7 @@ class FilterDesignApp(tk.Tk):
         top_bar.pack(side=tk.TOP, fill=tk.X)
 
         ttk.Label(top_bar, text="Pure ANSI C99 Code (Direct Form II Transposed Biquad Cascade - Zero External Dependencies)",
-                  font=('Segoe UI', 9, 'bold'), foreground='#98c379').pack(side=tk.LEFT)
+                  font=('Segoe UI', 9, 'bold'), foreground='#1a7f37').pack(side=tk.LEFT)
 
         btn_copy = ttk.Button(top_bar, text="📋 Copy Code to Clipboard", style='Accent.TButton',
                               command=self._copy_c_code)
@@ -395,7 +395,7 @@ class FilterDesignApp(tk.Tk):
         btn_save_c.pack(side=tk.RIGHT, padx=4)
 
         # Code text display
-        self.text_code = tk.Text(parent, bg='#1e2227', fg='#abb2bf', insertbackground='#ffffff',
+        self.text_code = tk.Text(parent, bg='#ffffff', fg='#24292f', insertbackground='#24292f',
                                  font=('Consolas', 10), relief='flat', padx=12, pady=12)
         scrollbar = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=self.text_code.yview)
         self.text_code.configure(yscrollcommand=scrollbar.set)
@@ -408,14 +408,14 @@ class FilterDesignApp(tk.Tk):
         top_bar.pack(side=tk.TOP, fill=tk.X)
 
         ttk.Label(top_bar, text="Detailed Second-Order Sections (Biquads) and Direct Form Polynomials",
-                  font=('Segoe UI', 9, 'bold'), foreground='#e5c07b').pack(side=tk.LEFT)
+                  font=('Segoe UI', 9, 'bold'), foreground='#1f2328').pack(side=tk.LEFT)
 
         btn_save_json = ttk.Button(top_bar, text="💾 Export Coefficients JSON", style='Accent.TButton',
                                    command=self._export_coeffs_json)
         btn_save_json.pack(side=tk.RIGHT)
 
         # Coefficients display
-        self.text_coeffs = tk.Text(parent, bg='#1e2227', fg='#abb2bf', insertbackground='#ffffff',
+        self.text_coeffs = tk.Text(parent, bg='#ffffff', fg='#24292f', insertbackground='#24292f',
                                    font=('Consolas', 10), relief='flat', padx=12, pady=12)
         scrollbar = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=self.text_coeffs.yview)
         self.text_coeffs.configure(yscrollcommand=scrollbar.set)
@@ -741,11 +741,11 @@ class FilterDesignApp(tk.Tk):
 
         # Axes & grid
         canvas.create_rectangle(margin_x, margin_y, margin_x + plot_w, margin_y + plot_h,
-                                fill='#21252b', outline='#2c313a')
-        canvas.create_line(margin_x, mid_y, margin_x + plot_w, mid_y, fill='#3e4451', dash=(2, 4))
-        canvas.create_text(margin_x - 5, mid_y, text="0.0", fill='#7f848e', font=('Segoe UI', 8), anchor='e')
-        canvas.create_text(margin_x - 5, margin_y, text="+1.0", fill='#7f848e', font=('Segoe UI', 8), anchor='e')
-        canvas.create_text(margin_x - 5, margin_y + plot_h, text="-1.0", fill='#7f848e', font=('Segoe UI', 8), anchor='e')
+                                fill='#ffffff', outline='#d0d7de')
+        canvas.create_line(margin_x, mid_y, margin_x + plot_w, mid_y, fill='#d0d7de', dash=(2, 4))
+        canvas.create_text(margin_x - 5, mid_y, text="0.0", fill='#57606a', font=('Segoe UI', 8), anchor='e')
+        canvas.create_text(margin_x - 5, margin_y, text="+1.0", fill='#57606a', font=('Segoe UI', 8), anchor='e')
+        canvas.create_text(margin_x - 5, margin_y + plot_h, text="-1.0", fill='#57606a', font=('Segoe UI', 8), anchor='e')
 
         num_pts = min(len(self.test_in), 800)
         step = max(1, len(self.test_in) // num_pts)
@@ -762,9 +762,9 @@ class FilterDesignApp(tk.Tk):
             pts_out.extend([x, y_out])
 
         if len(pts_in) >= 4:
-            canvas.create_line(pts_in, fill='#56b6c2', width=1)
+            canvas.create_line(pts_in, fill='#0969da', width=1.5)
         if len(pts_out) >= 4:
-            canvas.create_line(pts_out, fill='#98c379', width=2)
+            canvas.create_line(pts_out, fill='#1a7f37', width=2)
 
     def _draw_fft_canvas(self):
         canvas = self.canvas_fft
@@ -781,7 +781,7 @@ class FilterDesignApp(tk.Tk):
         plot_h = h - 2 * margin_y
 
         canvas.create_rectangle(margin_x, margin_y, margin_x + plot_w, margin_y + plot_h,
-                                fill='#21252b', outline='#2c313a')
+                                fill='#ffffff', outline='#d0d7de')
 
         # Compute FFT for input and output
         f_in, db_in = compute_fft(self.test_in, self.sample_rate, max_points=1024)
@@ -794,8 +794,8 @@ class FilterDesignApp(tk.Tk):
         for db in [-60, -40, -20, 0]:
             ratio = (db - db_min) / (db_max - db_min)
             y = margin_y + (1.0 - ratio) * plot_h
-            canvas.create_line(margin_x, y, margin_x + plot_w, y, fill='#2c313a', dash=(2, 4))
-            canvas.create_text(margin_x - 5, y, text=f"{db}dB", fill='#7f848e', font=('Segoe UI', 8), anchor='e')
+            canvas.create_line(margin_x, y, margin_x + plot_w, y, fill='#eaeef2', dash=(2, 4))
+            canvas.create_text(margin_x - 5, y, text=f"{db}dB", fill='#57606a', font=('Segoe UI', 8), anchor='e')
 
         # Plot curves (linear freq axis up to Nyquist)
         f_nyq = self.sample_rate / 2.0
@@ -815,9 +815,9 @@ class FilterDesignApp(tk.Tk):
             coords_out.extend([x, y])
 
         if len(coords_in) >= 4:
-            canvas.create_line(coords_in, fill='#e5c07b', width=1, dash=(3, 2))
+            canvas.create_line(coords_in, fill='#b08800', width=1, dash=(3, 2))
         if len(coords_out) >= 4:
-            canvas.create_line(coords_out, fill='#98c379', width=2)
+            canvas.create_line(coords_out, fill='#1a7f37', width=2)
 
     # --- Actions & Exports ---
     def _show_c_code_tab(self):
@@ -844,7 +844,7 @@ class FilterDesignApp(tk.Tk):
         dlg = tk.Toplevel(self)
         dlg.title("Export Filter & Test Data")
         dlg.geometry("400x260")
-        dlg.configure(bg='#1e2227')
+        dlg.configure(bg='#f6f8fa')
         dlg.transient(self)
         dlg.grab_set()
 
