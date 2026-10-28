@@ -86,3 +86,34 @@ python app.py
 ```powershell
 python -m unittest test_filter_design.py
 ```
+
+---
+
+## Building the Standalone Executable (.exe)
+
+You can compile a self-contained Windows executable (`FilterDesignStudio.exe`) that runs on any 64-bit Windows computer without requiring Python or external libraries installed.
+
+### Option 1: Quick 1-Click Build Script
+
+Run the included batch script from the command prompt or double-click it in Windows Explorer:
+
+```cmd
+build.bat
+```
+
+### Option 2: Manual Build Command
+
+1. Install PyInstaller (if not already installed):
+   ```powershell
+   pip install pyinstaller
+   ```
+
+2. Compile the application:
+   ```powershell
+   python -m PyInstaller --clean --onefile --noconsole --name FilterDesignStudio app.py
+   ```
+
+The compiled standalone executable will be generated at:
+```
+dist/FilterDesignStudio.exe
+```
