@@ -1119,27 +1119,46 @@ class FIRFilter:
         lines.append("#endif\n")
         return "\n".join(lines)
 
+    WINDOW_3DB_FACTORS = {
+        "Rectangular": 0.48,
+        "Bartlett": 0.73,
+        "Hann": 0.82,
+        "Hamming": 0.75,
+        "Blackman": 0.96,
+        "Blackman-Harris": 1.11,
+        "Nuttall": 1.11,
+        "Flat-Top": 1.73,
+        "Bohman": 0.95,
+        "Parzen": 0.90,
+        "Bartlett-Hann": 0.80,
+        "Tukey": 0.75,
+        "Kaiser": 0.85,
+        "Gaussian": 0.85,
+    }
+
     def check_criteria_match(self, fc1: float, fc2: Optional[float] = None) -> Tuple[bool, str]:
         """Validate whether the synthesized FIR filter satisfies the design criteria."""
         fs = self.sample_rate
         N = self.num_taps
-        c_win = 3.3
-        delta_f = c_win * fs / N
+        c_3db = self.WINDOW_3DB_FACTORS.get(getattr(self, 'window_name', 'Hamming'), 0.75)
+        # Full transition bandwidth from passband to stopband:
+        c_full = c_3db * 4.4
+        delta_f = c_full * fs / N
         ftype = self.filter_type
 
         if ftype == 'LPF':
             mags, _, _ = self.frequency_response([fc1])
             mag_fc = mags[0]
-            if mag_fc > -2.0:
-                req = int(math.ceil(c_win * fs / max(1.0, fc1)))
+            if mag_fc > -3.0:
+                req = max(N + 2, int(math.ceil(c_3db * fs / max(1.0, fc1))))
                 if req % 2 == 0:
                     req += 1
                 return False, f"At cutoff ({fc1:.1f} Hz), response is {mag_fc:.1f} dB (expected <= -3 dB). Trans. width (Δf ≈ {int(delta_f)} Hz) exceeds cutoff. Need ~{req:,} taps or switch to IIR."
         elif ftype == 'HPF':
             mags, _, _ = self.frequency_response([10.0, fc1])
             mag_dc, mag_fc = mags[0], mags[1]
-            if mag_fc > -2.0 or mag_dc > -6.0:
-                req = int(math.ceil(c_win * fs / max(1.0, fc1)))
+            if mag_fc > -3.0 or mag_dc > -6.0:
+                req = max(N + 2, int(math.ceil(c_3db * fs / max(1.0, fc1))))
                 if req % 2 == 0:
                     req += 1
                 return False, f"At cutoff ({fc1:.1f} Hz), response is {mag_fc:.1f} dB (expected <= -3 dB). Low frequencies are not attenuated. Need ~{req:,} taps or switch to IIR."
@@ -1147,17 +1166,17 @@ class FIRFilter:
             fc2_val = fc2 if fc2 is not None else fc1 * 2.0
             bw = max(1.0, fc2_val - fc1)
             mags, _, _ = self.frequency_response([10.0, fc1, fc2_val])
-            req = int(math.ceil(c_win * fs / min(fc1, bw)))
+            req = max(N + 2, int(math.ceil(c_3db * fs / min(fc1, bw))))
             if req % 2 == 0:
                 req += 1
-            if bw < 0.6 * delta_f or mags[1] > -2.0 or mags[2] > -2.0 or mags[0] > -6.0:
+            if bw < 0.6 * delta_f or mags[1] > -3.0 or mags[2] > -3.0 or mags[0] > -6.0:
                 return False, f"Passband ({fc1:.0f}–{fc2_val:.0f} Hz, {int(bw)} Hz wide) is narrower than transition width (Δf ≈ {int(delta_f)} Hz). Need ~{req:,} taps or switch to IIR."
         elif ftype in ('BSF', 'NOTCH'):
             fc2_val = fc2 if fc2 is not None else fc1 * 2.0
             f_mid = math.sqrt(fc1 * fc2_val)
             mags, _, _ = self.frequency_response([f_mid])
             if mags[0] > -6.0:
-                req = int(math.ceil(c_win * fs / max(1.0, fc2_val - fc1)))
+                req = max(N + 2, int(math.ceil(c_3db * fs / max(1.0, fc2_val - fc1))))
                 if req % 2 == 0:
                     req += 1
                 return False, f"Notch ({fc1:.0f}–{fc2_val:.0f} Hz) center attenuation is only {mags[0]:.1f} dB (expected <= -12 dB). Need ~{req:,} taps or switch to IIR."
