@@ -6,3 +6,6 @@ __pycache__/
 *.java
 .DS_Store
 Thumbs.db
+build/
+dist/
+*.spec
