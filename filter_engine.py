@@ -297,7 +297,7 @@ class DigitalFilter:
         # Validate frequency bounds
         f1 = max(10.0, min(self.f_cutoff, nyquist * 0.99))
         f2 = max(10.0, min(self.f_cutoff2, nyquist * 0.99))
-        if f1 > f2:
+        if self.filter_type in ('BPF', 'BSF') and f1 > f2:
             f1, f2 = f2, f1
 
         # 1. Analog Low-Pass Prototype Poles & Zeros
@@ -691,6 +691,24 @@ class DigitalFilter:
                 return False, f"Cutoff 2 ({fc2:.0f} Hz) is too close to Nyquist limit ({nyquist:.0f} Hz)."
             if fc1 >= fc2:
                 return False, f"Cutoff 1 ({fc1:.0f} Hz) must be strictly less than Cutoff 2 ({fc2:.0f} Hz)."
+
+        # Validate that the synthesized filter response matches the cutoff specifications
+        if self.filter_type in ('LPF', 'HPF'):
+            mags, _, _ = self.frequency_response([fc1])
+            expected = -self.ripple_db if self.response_type == 'Chebyshev I' else -3.01
+            if abs(mags[0] - expected) > 2.5:
+                return False, f"At cutoff ({fc1:.0f} Hz), response is {mags[0]:.1f} dB (expected ~{expected:.1f} dB)."
+        elif self.filter_type == 'BPF' and fc2 is not None:
+            f_mid = math.sqrt(fc1 * fc2)
+            mags, _, _ = self.frequency_response([f_mid])
+            if mags[0] < -3.0:
+                return False, f"Center frequency ({f_mid:.0f} Hz) passband attenuation is {mags[0]:.1f} dB (expected ~ 0 dB)."
+        elif self.filter_type in ('BSF', 'NOTCH') and fc2 is not None:
+            f_mid = math.sqrt(fc1 * fc2)
+            mags, _, _ = self.frequency_response([f_mid])
+            if mags[0] > -6.0:
+                return False, f"Notch center ({f_mid:.0f} Hz) attenuation is only {mags[0]:.1f} dB (expected <= -6 dB)."
+
         return True, ""
 
 
@@ -837,7 +855,7 @@ class FIRFilter:
 
         f1 = max(10.0, min(self.f_cutoff, nyquist * 0.99))
         f2 = max(10.0, min(self.f_cutoff2, nyquist * 0.99))
-        if f1 > f2:
+        if self.filter_type in ('BPF', 'BSF') and f1 > f2:
             f1, f2 = f2, f1
 
         wc1 = 2.0 * math.pi * f1 / fs

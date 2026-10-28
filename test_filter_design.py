@@ -260,6 +260,19 @@ class TestFilterEngine(unittest.TestCase):
         mags, _, _ = fir.frequency_response(probe_freqs)
         self.assertLessEqual(max(mags), 0.05, f"FIR BPF exceeded 0 dB: {max(mags):.2f} dB")
 
+    def test_lpf_high_cutoff_not_swapped_with_fc2(self):
+        # When f_cutoff (e.g. 21966 Hz) is higher than f_cutoff2 (e.g. default 4000 Hz),
+        # LPF must NOT swap them and must design at 21966 Hz
+        filt = DigitalFilter('LPF', 'Butterworth', order=4, sample_rate=48000, f_cutoff=21966.0, f_cutoff2=4000.0)
+        mags, _, _ = filt.frequency_response([10000.0, 21966.0])
+        self.assertAlmostEqual(mags[0], 0.0, delta=0.1, msg="Passband at 10 kHz should be flat (~0 dB)")
+        self.assertAlmostEqual(mags[1], -3.01, delta=0.5, msg="Cutoff at 21966 Hz should be ~ -3 dB")
+
+        # Same for FIR filter
+        fir = FIRFilter('LPF', 65, 48000, 21966.0, f_cutoff2=4000.0)
+        mags_fir, _, _ = fir.frequency_response([10000.0])
+        self.assertAlmostEqual(mags_fir[0], 0.0, delta=0.5)
+
 class TestSignalTestbench(unittest.TestCase):
     def test_audio_to_wav_bytes_applies_volume(self):
         wav_data = audio_to_wav_bytes([0.5], 48000, volume=0.5)
