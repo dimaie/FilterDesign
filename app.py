@@ -19,6 +19,7 @@ Features:
 
 import os
 import math
+import tempfile
 from typing import Optional, List
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -26,7 +27,8 @@ from tkinter import ttk, messagebox, filedialog
 from filter_engine import DigitalFilter
 from filter_canvas import InteractiveResponseCanvas
 from signal_testbench import (generate_signal, compute_fft,
-                              export_data_to_csv, export_data_to_json, export_audio_to_wav)
+                              export_data_to_csv, export_data_to_json, export_audio_to_wav,
+                              audio_to_wav_bytes, ContinuousAudioEngine)
 
 
 class FilterDesignApp(tk.Tk):
@@ -57,6 +59,11 @@ class FilterDesignApp(tk.Tk):
         self.test_in = []
         self.test_out = []
 
+        # Real-time continuous audio engine (Falstad DFilter style)
+        self.audio_engine = ContinuousAudioEngine(sample_rate=self.sample_rate, block_size=1024)
+        self.audio_engine.set_volume(0.70)
+        self.audio_engine.set_sound_enabled(True)
+
         self._initialized = False
 
         # Build UI layout
@@ -66,7 +73,14 @@ class FilterDesignApp(tk.Tk):
 
         # Initial filter calculation
         self.recalculate_filter()
-        self.run_test_signal()
+        self.audio_engine.set_signal_params(signal_type=self.var_test_sig.get(), freq1=500.0, freq2=5000.0)
+        self.audio_engine.start()
+
+        # Window close handler for graceful audio device release
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # Start live continuous visualizer update loop
+        self._schedule_live_visuals()
 
     def _setup_styles(self):
         style = ttk.Style(self)
@@ -197,9 +211,7 @@ class FilterDesignApp(tk.Tk):
 
         # Cutoff Frequency 2 (for BPF / BSF)
         self.lbl_fc2 = ttk.Label(sidebar, text="Cutoff Frequency 2 (Hz):", style='Card.TLabel')
-        self.lbl_fc2.pack(anchor='w')
         self.f2_row = ttk.Frame(sidebar, style='Card.TFrame')
-        self.f2_row.pack(fill=tk.X, pady=(2, 2))
         self.var_fc2 = tk.DoubleVar(value=4000.0)
         self.entry_fc2 = ttk.Entry(self.f2_row, width=10)
         self.entry_fc2.insert(0, "4000.0")
@@ -210,7 +222,6 @@ class FilterDesignApp(tk.Tk):
 
         self.scale_fc2 = ttk.Scale(sidebar, from_=0.0, to=1.0, style='TScale',
                                    command=self._on_scale_fc2)
-        self.scale_fc2.pack(fill=tk.X, pady=(0, 8))
         self._update_slider_pos_from_hz(self.scale_fc2, 4000.0)
 
         # Dynamic Ripple / Stopband options
@@ -291,58 +302,69 @@ class FilterDesignApp(tk.Tk):
 
     # --- TAB 2: TEST MODE & VERIFICATION ---
     def _build_tab_test(self, parent):
-        # Top Control Bar for Signal Generation
+        # Top Control Bar for Signal Generation & Audio Controls
         test_ctrls = ttk.Frame(parent, style='Card.TFrame', padding=10)
         test_ctrls.pack(side=tk.TOP, fill=tk.X, pady=(0, 6))
 
-        # Row 1: Signal selection
+        # Row 1: Signal selection & Real-Time Frequency Slider
         r1 = ttk.Frame(test_ctrls, style='Card.TFrame')
         r1.pack(fill=tk.X, pady=(0, 6))
 
-        ttk.Label(r1, text="Test Signal Type:", style='Card.TLabel', font=('Segoe UI', 9, 'bold')).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Label(r1, text="Input Signal:", style='Card.TLabel', font=('Segoe UI', 9, 'bold')).pack(side=tk.LEFT, padx=(0, 6))
         self.var_test_sig = tk.StringVar(value="Sweep (Log)")
-        cb_test_sig = ttk.Combobox(r1, textvariable=self.var_test_sig, width=15, state="readonly",
+        cb_test_sig = ttk.Combobox(r1, textvariable=self.var_test_sig, width=14, state="readonly",
                                    values=["Sine", "Multi-tone", "Sweep (Log)", "Sweep (Linear)",
                                            "White Noise", "Pink Noise", "Square", "Triangle", "Sawtooth",
-                                           "Impulse", "Step"])
-        cb_test_sig.pack(side=tk.LEFT, padx=(0, 15))
-        cb_test_sig.bind("<<ComboboxSelected>>", lambda e: self.run_test_signal())
+                                           "Periodic Noise", "Impulse"])
+        cb_test_sig.pack(side=tk.LEFT, padx=(0, 12))
+        cb_test_sig.bind("<<ComboboxSelected>>", self._on_test_signal_param_changed)
 
-        ttk.Label(r1, text="Freq 1 (Hz):", style='Card.TLabel').pack(side=tk.LEFT, padx=(0, 4))
-        self.var_test_f1 = tk.StringVar(value="500")
-        ent_f1 = ttk.Entry(r1, textvariable=self.var_test_f1, width=7)
-        ent_f1.pack(side=tk.LEFT, padx=(0, 15))
-        ent_f1.bind("<Return>", lambda e: self.run_test_signal())
+        ttk.Label(r1, text="Input Freq 1 (Hz):", style='Card.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        self.var_test_f1 = tk.StringVar(value="500.0")
+        self.entry_test_f1 = ttk.Entry(r1, textvariable=self.var_test_f1, width=7)
+        self.entry_test_f1.pack(side=tk.LEFT, padx=(0, 4))
+        self.entry_test_f1.bind("<Return>", self._on_entry_test_f1)
+        self.entry_test_f1.bind("<FocusOut>", self._on_entry_test_f1)
 
-        ttk.Label(r1, text="Freq 2 / End (Hz):", style='Card.TLabel').pack(side=tk.LEFT, padx=(0, 4))
-        self.var_test_f2 = tk.StringVar(value="10000")
-        ent_f2 = ttk.Entry(r1, textvariable=self.var_test_f2, width=7)
-        ent_f2.pack(side=tk.LEFT, padx=(0, 15))
-        ent_f2.bind("<Return>", lambda e: self.run_test_signal())
+        self.scale_test_f1 = ttk.Scale(r1, from_=0.0, to=1.0, style='TScale', length=120,
+                                       command=self._on_scale_test_f1)
+        self.scale_test_f1.pack(side=tk.LEFT, padx=(0, 12))
+        self._update_slider_pos_from_hz(self.scale_test_f1, 500.0)
 
-        ttk.Label(r1, text="Duration (s):", style='Card.TLabel').pack(side=tk.LEFT, padx=(0, 4))
-        self.var_test_dur = tk.StringVar(value="0.05")
-        ent_dur = ttk.Entry(r1, textvariable=self.var_test_dur, width=5)
-        ent_dur.pack(side=tk.LEFT, padx=(0, 15))
-        ent_dur.bind("<Return>", lambda e: self.run_test_signal())
+        self.lbl_test_f2 = ttk.Label(r1, text="Freq 2 / End (Hz):", style='Card.TLabel')
+        self.lbl_test_f2.pack(side=tk.LEFT, padx=(0, 4))
+        self.var_test_f2 = tk.StringVar(value="5000.0")
+        self.entry_test_f2 = ttk.Entry(r1, textvariable=self.var_test_f2, width=7)
+        self.entry_test_f2.pack(side=tk.LEFT, padx=(0, 8))
+        self.entry_test_f2.bind("<Return>", self._on_test_signal_param_changed)
+        self.entry_test_f2.bind("<FocusOut>", self._on_test_signal_param_changed)
 
-        btn_run = ttk.Button(r1, text="▶ Run Verification", style='Action.TButton',
-                             command=self.run_test_signal)
-        btn_run.pack(side=tk.RIGHT)
-
-        # Row 2: Signal Metrics & Actions
+        # Row 2: Continuous Sound Controls, Volume Slider & Live Metrics
         r2 = ttk.Frame(test_ctrls, style='Card.TFrame')
-        r2.pack(fill=tk.X)
+        r2.pack(fill=tk.X, pady=(2, 0))
 
-        self.lbl_test_metrics = ttk.Label(r2, text="Metrics: Calculating...",
+        self.var_test_sound = tk.BooleanVar(value=True)
+        self.chk_test_sound = ttk.Checkbutton(r2, text="🔊 Sound On", variable=self.var_test_sound,
+                                              command=self._on_test_sound_toggle)
+        self.chk_test_sound.pack(side=tk.LEFT, padx=(0, 10))
+
+        ttk.Label(r2, text="Volume:", style='Card.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        self.var_test_volume = tk.DoubleVar(value=70.0)
+        self.scale_test_volume = ttk.Scale(r2, from_=0, to=100, variable=self.var_test_volume,
+                                           command=self._on_test_volume_changed, length=120)
+        self.scale_test_volume.pack(side=tk.LEFT)
+        self.lbl_test_volume = ttk.Label(r2, text="70%", style='Card.TLabel', width=4)
+        self.lbl_test_volume.pack(side=tk.LEFT, padx=(4, 15))
+
+        self.lbl_test_metrics = ttk.Label(r2, text="Metrics: Initializing...",
                                           style='Card.TLabel', foreground='#0969da', font=('Segoe UI', 9))
         self.lbl_test_metrics.pack(side=tk.LEFT)
 
-        btn_save_wav = ttk.Button(r2, text="Export Output to WAV", style='Accent.TButton',
+        btn_save_wav = ttk.Button(r2, text="Export Snapshot WAV", style='Accent.TButton',
                                   command=self._export_test_wav)
         btn_save_wav.pack(side=tk.RIGHT, padx=4)
 
-        btn_save_csv = ttk.Button(r2, text="Export Data to CSV", style='Accent.TButton',
+        btn_save_csv = ttk.Button(r2, text="Export Data CSV", style='Accent.TButton',
                                   command=self._export_test_csv)
         btn_save_csv.pack(side=tk.RIGHT, padx=4)
 
@@ -459,8 +481,9 @@ class FilterDesignApp(tk.Tk):
             self.sample_rate = float(self.var_sr.get())
         except ValueError:
             self.sample_rate = 48000.0
+        if hasattr(self, 'audio_engine'):
+            self.audio_engine.set_sample_rate(self.sample_rate)
         self.recalculate_filter()
-        self.run_test_signal()
 
     def _on_param_changed(self, event=None):
         self.response_type = self.var_response_type.get()
@@ -609,6 +632,10 @@ class FilterDesignApp(tk.Tk):
             text=f"Sections: {biquad_count} Biquad(s) | Sample Rate: {int(self.sample_rate)} Hz | Total Poles: {biquad_count * 2}"
         )
 
+        # Update real-time continuous audio engine
+        if hasattr(self, 'audio_engine'):
+            self.audio_engine.set_filter(self.current_filter)
+
         # Update C Code tab
         self._update_c_code_text()
 
@@ -686,43 +713,81 @@ class FilterDesignApp(tk.Tk):
         self.text_coeffs.delete("1.0", tk.END)
         self.text_coeffs.insert(tk.END, "\n".join(txt))
 
-    # --- Test Mode Execution & Plotting ---
-    def run_test_signal(self):
-        if not self.current_filter:
-            return
+    # --- Test Mode Continuous Audio & Plotting ---
+    def _on_test_sound_toggle(self):
+        enabled = self.var_test_sound.get()
+        if hasattr(self, 'audio_engine'):
+            self.audio_engine.set_sound_enabled(enabled)
 
+    def _on_test_volume_changed(self, value):
+        vol = float(value)
+        self.lbl_test_volume.configure(text=f"{int(vol)}%")
+        if hasattr(self, 'audio_engine'):
+            self.audio_engine.set_volume(vol / 100.0)
+
+    def _on_scale_test_f1(self, val):
+        f = self._slider_pos_to_hz(float(val))
+        self.entry_test_f1.delete(0, tk.END)
+        self.entry_test_f1.insert(0, f"{f:.1f}")
+        self._on_test_signal_param_changed()
+
+    def _on_entry_test_f1(self, event=None):
+        try:
+            val = float(self.entry_test_f1.get())
+            self._update_slider_pos_from_hz(self.scale_test_f1, val)
+            self._on_test_signal_param_changed()
+        except ValueError:
+            pass
+
+    def _on_test_signal_param_changed(self, event=None):
         sig_type = self.var_test_sig.get()
         try:
             f1 = float(self.var_test_f1.get())
-            f2 = float(self.var_test_f2.get())
-            dur = max(0.005, min(0.5, float(self.var_test_dur.get())))
         except ValueError:
-            f1, f2, dur = 500.0, 10000.0, 0.05
+            f1 = 500.0
+        try:
+            f2 = float(self.var_test_f2.get())
+        except ValueError:
+            f2 = 5000.0
+        if hasattr(self, 'audio_engine'):
+            self.audio_engine.set_signal_params(signal_type=sig_type, freq1=f1, freq2=f2)
 
-        time_vec, in_vec = generate_signal(sig_type, duration_sec=dur, sample_rate=self.sample_rate,
-                                           freq1=f1, freq2=f2, amplitude=0.9)
-        self.current_filter.reset()
-        out_vec = self.current_filter.process_block(in_vec)
+    def _schedule_live_visuals(self):
+        self._update_live_visuals()
+        self.after(35, self._schedule_live_visuals)
 
-        self.test_time = time_vec
-        self.test_in = in_vec
-        self.test_out = out_vec
+    def _update_live_visuals(self):
+        if not getattr(self, '_initialized', False):
+            return
+        try:
+            in_vec, out_vec, metrics = self.audio_engine.get_snapshot()
+            self.test_in = in_vec
+            self.test_out = out_vec
+            self.test_time = [i / self.sample_rate for i in range(len(in_vec))]
 
-        # Calculate metrics (RMS, peak, attenuation)
-        rms_in = math.sqrt(sum(x * x for x in in_vec) / max(1, len(in_vec)))
-        rms_out = math.sqrt(sum(y * y for y in out_vec) / max(1, len(out_vec)))
-        ratio = (rms_out / rms_in) if rms_in > 1e-9 else 1.0
-        ratio_db = 20.0 * math.log10(max(ratio, 1e-6))
+            cur_tab = self.notebook.select()
+            if cur_tab == str(self.tab_test):
+                sig_type = self.var_test_sig.get()
+                unstable_flag = " | ⚠️ UNSTABLE" if metrics.get("unstable") else ""
+                self.lbl_test_metrics.config(
+                    text=f"Signal: {sig_type} | RMS In: {metrics['rms_in']:.3f} | RMS Out: {metrics['rms_out']:.3f} | Gain: {metrics['gain_db']:+.2f} dB | Peak: {metrics['peak_out']:.2f}{unstable_flag}"
+                )
+                self._draw_waveform_canvas()
+                self._draw_fft_canvas()
+        except Exception:
+            pass
 
-        self.lbl_test_metrics.config(
-            text=f"Signal: {sig_type} | Samples: {len(in_vec)} | RMS In: {rms_in:.3f} | RMS Out: {rms_out:.3f} | Gain: {ratio_db:+.2f} dB"
-        )
+    def _on_close(self):
+        try:
+            if hasattr(self, 'audio_engine'):
+                self.audio_engine.stop()
+        except Exception:
+            pass
+        self.destroy()
 
-        # Draw waveform oscilloscope
-        self._draw_waveform_canvas()
-
-        # Compute & draw FFT spectrum
-        self._draw_fft_canvas()
+    def run_test_signal(self):
+        """Compatibility trigger to synchronize signal parameters."""
+        self._on_test_signal_param_changed()
 
     def _draw_waveform_canvas(self):
         canvas = self.canvas_wave
@@ -730,7 +795,6 @@ class FilterDesignApp(tk.Tk):
         w = canvas.winfo_width()
         h = canvas.winfo_height()
         if w < 50 or h < 50:
-            canvas.after(50, self._draw_waveform_canvas)
             return
 
         margin_x = 45
@@ -772,7 +836,6 @@ class FilterDesignApp(tk.Tk):
         w = canvas.winfo_width()
         h = canvas.winfo_height()
         if w < 50 or h < 50:
-            canvas.after(50, self._draw_fft_canvas)
             return
 
         margin_x = 45
@@ -863,24 +926,55 @@ class FilterDesignApp(tk.Tk):
                    command=lambda: [dlg.destroy(), self._export_test_wav()]).pack(fill=tk.X, padx=30, pady=4)
 
     def _export_test_csv(self):
-        if not self.test_time:
-            messagebox.showwarning("No Data", "Please run the test verification first.")
+        if not self.test_out and not self.current_filter:
+            messagebox.showwarning("No Data", "No audio signal data available to export.")
             return
         fpath = filedialog.asksaveasfilename(defaultextension=".csv",
                                              filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")],
                                              initialfile="filter_test_data.csv")
         if fpath:
-            export_data_to_csv(fpath, self.test_time, self.test_in, self.test_out)
+            sig_type = self.var_test_sig.get()
+            try:
+                f1 = float(self.var_test_f1.get())
+            except ValueError:
+                f1 = 500.0
+            try:
+                f2 = float(self.var_test_f2.get())
+            except ValueError:
+                f2 = 5000.0
+            t_vec, in_vec = generate_signal(sig_type, duration_sec=0.2, sample_rate=self.sample_rate,
+                                            freq1=f1, freq2=f2, amplitude=0.8)
+            if self.current_filter:
+                f_clone = self.current_filter.clone()
+                f_clone.reset()
+                out_vec = f_clone.process_block(in_vec)
+            else:
+                out_vec = in_vec
+            export_data_to_csv(fpath, t_vec, in_vec, out_vec)
             messagebox.showinfo("Export Successful", f"Test data saved to:\n{fpath}")
 
     def _export_test_json(self):
-        if not self.test_time or not self.current_filter:
-            messagebox.showwarning("No Data", "Please run the test verification first.")
+        if not self.current_filter:
+            messagebox.showwarning("No Data", "No filter design available.")
             return
         fpath = filedialog.asksaveasfilename(defaultextension=".json",
                                              filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")],
                                              initialfile="filter_test_data.json")
         if fpath:
+            sig_type = self.var_test_sig.get()
+            try:
+                f1 = float(self.var_test_f1.get())
+            except ValueError:
+                f1 = 500.0
+            try:
+                f2 = float(self.var_test_f2.get())
+            except ValueError:
+                f2 = 5000.0
+            t_vec, in_vec = generate_signal(sig_type, duration_sec=0.2, sample_rate=self.sample_rate,
+                                            freq1=f1, freq2=f2, amplitude=0.8)
+            f_clone = self.current_filter.clone()
+            f_clone.reset()
+            out_vec = f_clone.process_block(in_vec)
             meta = {
                 "filter_type": self.filter_type,
                 "response_type": self.response_type,
@@ -891,18 +985,35 @@ class FilterDesignApp(tk.Tk):
                 "ripple_db": self.ripple_db,
                 "stopband_db": self.stopband_db
             }
-            export_data_to_json(fpath, meta, self.test_time, self.test_in, self.test_out)
+            export_data_to_json(fpath, meta, t_vec, in_vec, out_vec)
             messagebox.showinfo("Export Successful", f"JSON data saved to:\n{fpath}")
 
     def _export_test_wav(self):
-        if not self.test_out:
-            messagebox.showwarning("No Data", "Please run the test verification first.")
+        if not self.current_filter and not self.test_out:
+            messagebox.showwarning("No Data", "No audio data available for export.")
             return
         fpath = filedialog.asksaveasfilename(defaultextension=".wav",
                                              filetypes=[("WAV Audio Files", "*.wav"), ("All Files", "*.*")],
                                              initialfile="filtered_signal.wav")
         if fpath:
-            export_audio_to_wav(fpath, self.test_out, int(self.sample_rate))
+            sig_type = self.var_test_sig.get()
+            try:
+                f1 = float(self.var_test_f1.get())
+            except ValueError:
+                f1 = 500.0
+            try:
+                f2 = float(self.var_test_f2.get())
+            except ValueError:
+                f2 = 5000.0
+            _, in_vec = generate_signal(sig_type, duration_sec=1.0, sample_rate=self.sample_rate,
+                                        freq1=f1, freq2=f2, amplitude=0.8)
+            if self.current_filter:
+                f_clone = self.current_filter.clone()
+                f_clone.reset()
+                out_vec = f_clone.process_block(in_vec)
+            else:
+                out_vec = in_vec
+            export_audio_to_wav(fpath, out_vec, int(self.sample_rate))
             messagebox.showinfo("Export Successful", f"WAV Audio saved to:\n{fpath}")
 
     def _export_coeffs_json(self):

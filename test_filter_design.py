@@ -15,13 +15,15 @@ import unittest
 import tempfile
 import json
 import csv
+import io
 import wave
 
 from filter_engine import (DigitalFilter, butterworth_analog_poles,
                            chebyshev1_analog_poles, chebyshev2_analog_poles_zeros,
                            bessel_analog_poles, BiquadSection)
 from signal_testbench import (generate_signal, compute_fft, export_data_to_csv,
-                              export_data_to_json, export_audio_to_wav)
+                              export_data_to_json, export_audio_to_wav, audio_to_wav_bytes,
+                              ContinuousSignalGenerator, ContinuousAudioEngine)
 
 
 class TestFilterEngine(unittest.TestCase):
@@ -119,8 +121,24 @@ class TestFilterEngine(unittest.TestCase):
         self.assertIn("test_filter_init", c_code)
         self.assertIn("BiquadSection", c_code)
 
+    def test_filter_clone(self):
+        filt = DigitalFilter('LPF', 'Butterworth', order=4, sample_rate=48000, f_cutoff=1200)
+        cloned = filt.clone()
+        self.assertEqual(len(cloned.sections), len(filt.sections))
+        self.assertEqual(cloned.order, filt.order)
+        self.assertEqual(cloned.sample_rate, filt.sample_rate)
+        # Modify cloned state and verify original is untouched
+        cloned.sections[0].s1 = 42.0
+        self.assertEqual(filt.sections[0].s1, 0.0)
+
 
 class TestSignalTestbench(unittest.TestCase):
+    def test_audio_to_wav_bytes_applies_volume(self):
+        wav_data = audio_to_wav_bytes([0.5], 48000, volume=0.5)
+        with wave.open(io.BytesIO(wav_data), 'rb') as wav_file:
+            self.assertEqual(wav_file.getframerate(), 48000)
+            self.assertEqual(wav_file.readframes(1), b'\xff\x1f')
+
     def test_signal_generation_and_fft(self):
         for sig_name in ['sine', 'multi-tone', 'sweep (log)', 'sweep (linear)',
                          'square', 'triangle', 'sawtooth', 'white noise', 'impulse']:
@@ -154,6 +172,48 @@ class TestSignalTestbench(unittest.TestCase):
                 self.assertEqual(wf.getnchannels(), 1)
                 self.assertEqual(wf.getsampwidth(), 2)
                 self.assertEqual(wf.getframerate(), 48000)
+
+    def test_continuous_signal_generator(self):
+        gen = ContinuousSignalGenerator(sample_rate=48000)
+        types = ['Sine', 'Multi-tone', 'Square', 'Triangle', 'Sawtooth',
+                 'White Noise', 'Pink Noise', 'Periodic Noise', 'Sweep (Log)', 'Sweep (Linear)', 'Impulse']
+        for st in types:
+            gen.set_params(signal_type=st, freq1=600.0, freq2=3000.0, amplitude=0.7)
+            t_block, samples = gen.generate_block(512)
+            self.assertEqual(len(samples), 512)
+            self.assertEqual(len(t_block), 512)
+            # Verify amplitude bound
+            for s in samples:
+                self.assertLessEqual(abs(s), 1.0)
+
+    def test_continuous_audio_engine(self):
+        engine = ContinuousAudioEngine(sample_rate=48000, block_size=512)
+        engine.set_volume(0.6)
+        self.assertEqual(engine.volume, 0.6)
+        engine.set_sound_enabled(False) # Test without opening audio output device
+        self.assertFalse(engine.sound_enabled)
+
+        filt = DigitalFilter('LPF', 'Butterworth', order=4, sample_rate=48000, f_cutoff=1000)
+        engine.set_filter(filt)
+        engine.set_signal_params(signal_type="Sine", freq1=440.0)
+
+        engine.start()
+        import time
+        time.sleep(0.08)
+
+        in_s, out_s, metrics = engine.get_snapshot()
+        self.assertEqual(len(in_s), 512)
+        self.assertEqual(len(out_s), 512)
+        self.assertIn("rms_in", metrics)
+        self.assertIn("rms_out", metrics)
+        self.assertIn("gain_db", metrics)
+
+        # Update filter live
+        filt2 = DigitalFilter('HPF', 'Butterworth', order=4, sample_rate=48000, f_cutoff=2000)
+        engine.set_filter(filt2)
+        time.sleep(0.05)
+
+        engine.stop()
 
 
 if __name__ == "__main__":

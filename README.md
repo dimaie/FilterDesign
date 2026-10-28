@@ -24,18 +24,23 @@ An interactive Python desktop application for designing digital audio filters wi
    - Dynamic passband / stopband color-coded background zones.
    - Optional Phase Response display.
 
-3. **Built-in Signal Verification & Test Mode**:
-   - Built-in signal generator supporting:
+3. **Real-Time Continuous Audio Synthesizer & Verification Mode** (inspired by Paul Falstad's DFilter):
+   - Continuous audio streaming engine running in a dedicated background thread with zero external dependencies (using native Windows `winmm` audio hardware streaming).
+   - Instant tone and timbre updates: as you drag cutoffs on the frequency response canvas, change filter order, adjust ripple/attenuation, or switch filter types, the playing sound adapts in real time.
+   - Live signal synthesis supporting:
      - **Sine wave** (single tone)
      - **Multi-tone** (harmonic components)
-     - **Logarithmic Chirp** (exponential frequency sweep)
-     - **Linear Chirp** (linear frequency sweep)
+     - **Logarithmic Chirp** (continuous looping exponential frequency sweep)
+     - **Linear Chirp** (continuous looping linear frequency sweep)
      - **White Noise** and **Pink Noise** (1/f acoustic noise)
      - **Square, Triangle, and Sawtooth waveforms**
-     - **Impulse response** and **Step response**
-   - **Real-Time Oscilloscope**: Dual time-domain waveform display comparing Input vs Filtered Output.
-   - **FFT Spectrum Analyzer**: Dual spectrum plot showing input vs output magnitude spectrum across frequencies.
-   - Real-time quantitative metrics: Input/Output RMS levels, peak levels, and attenuation ($dB$).
+     - **Periodic Noise** (repeating random timbre cycle)
+     - **Impulse train**
+   - Real-time continuous **Input Frequency slider**: sweep input tones smoothly across the filter spectrum to hear passband and stopband attenuation live.
+   - **Sound On/Off toggle** and real-time **Volume slider** (0% to 100%).
+   - **Continuous Real-Time Oscilloscope**: Live time-domain dual waveform displaying Input vs Filtered Output.
+   - **Continuous Real-Time FFT Spectrum Analyzer**: Live spectrum plot displaying input vs output magnitude spectrum across frequencies at ~30 FPS.
+   - Real-time quantitative metrics: Input/Output RMS levels, peak levels, gain/attenuation ($dB$), and instability detection.
 
 4. **Multi-Format Export**:
    - **Zero-Dependency ANSI C99 Code**: Generates complete C structs, initialization functions, and sample/block processing functions using Direct Form II Transposed Biquad cascades. Fully self-contained, buildable with any C/C++ compiler (`gcc`, `clang`, `cl`, embedded compilers) without external dependencies.

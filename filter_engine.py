@@ -37,6 +37,12 @@ class BiquadSection:
         self.s1 = 0.0
         self.s2 = 0.0
 
+    def clone(self) -> 'BiquadSection':
+        sec = BiquadSection(self.b0, self.b1, self.b2, 1.0, self.a1, self.a2)
+        sec.s1 = self.s1
+        sec.s2 = self.s2
+        return sec
+
     def process_sample(self, x: float) -> float:
         """Process a single sample using Direct Form II Transposed structure."""
         y = self.b0 * x + self.s1
@@ -498,6 +504,21 @@ class DigitalFilter:
         """Reset state of all filter sections."""
         for sec in self.sections:
             sec.reset()
+
+    def clone(self) -> 'DigitalFilter':
+        """Create a clone of this digital filter with independent section states."""
+        f = DigitalFilter.__new__(DigitalFilter)
+        f.filter_type = self.filter_type
+        f.response_type = self.response_type
+        f.order = self.order
+        f.sample_rate = self.sample_rate
+        f.f_cutoff = self.f_cutoff
+        f.f_cutoff2 = self.f_cutoff2
+        f.ripple_db = self.ripple_db
+        f.stopband_db = self.stopband_db
+        f.gain = self.gain
+        f.sections = [sec.clone() for sec in self.sections]
+        return f
 
     def process_sample(self, x: float) -> float:
         """Process one sample through cascaded biquads."""

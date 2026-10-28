@@ -3,5 +3,6 @@ __pycache__/
 *$py.class
 *.wav
 *.csv
+*.java
 .DS_Store
 Thumbs.db
