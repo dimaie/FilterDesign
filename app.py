@@ -368,13 +368,14 @@ class FilterDesignApp(tk.Tk):
         self.var_test_f1 = tk.StringVar(value="500.0")
         self.var_test_f2 = tk.StringVar(value="5000.0")
 
-        ttk.Label(r1, text="Input Freq 1 (Hz):", style='Card.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        self.lbl_test_f1 = ttk.Label(r1, text="Input Freq 1 (Hz):", style='Card.TLabel')
+        self.lbl_test_f1.pack(side=tk.LEFT, padx=(0, 4))
         self.entry_test_f1 = ttk.Entry(r1, textvariable=self.var_test_f1, width=7)
         self.entry_test_f1.pack(side=tk.LEFT, padx=(0, 4))
         self.entry_test_f1.bind("<Return>", self._on_entry_test_f1)
         self.entry_test_f1.bind("<FocusOut>", self._on_entry_test_f1)
 
-        self.scale_test_f1 = ttk.Scale(r1, from_=0.0, to=1.0, style='TScale', length=120,
+        self.scale_test_f1 = ttk.Scale(r1, from_=0.0, to=1.0, style='TScale', length=110,
                                        command=self._on_scale_test_f1)
         self.scale_test_f1.pack(side=tk.LEFT, padx=(0, 12))
         self._update_slider_pos_from_hz(self.scale_test_f1, 500.0)
@@ -382,9 +383,14 @@ class FilterDesignApp(tk.Tk):
         self.lbl_test_f2 = ttk.Label(r1, text="Freq 2 / End (Hz):", style='Card.TLabel')
         self.lbl_test_f2.pack(side=tk.LEFT, padx=(0, 4))
         self.entry_test_f2 = ttk.Entry(r1, textvariable=self.var_test_f2, width=7)
-        self.entry_test_f2.pack(side=tk.LEFT, padx=(0, 8))
-        self.entry_test_f2.bind("<Return>", self._on_test_signal_param_changed)
-        self.entry_test_f2.bind("<FocusOut>", self._on_test_signal_param_changed)
+        self.entry_test_f2.pack(side=tk.LEFT, padx=(0, 4))
+        self.entry_test_f2.bind("<Return>", self._on_entry_test_f2)
+        self.entry_test_f2.bind("<FocusOut>", self._on_entry_test_f2)
+
+        self.scale_test_f2 = ttk.Scale(r1, from_=0.0, to=1.0, style='TScale', length=110,
+                                       command=self._on_scale_test_f2)
+        self.scale_test_f2.pack(side=tk.LEFT, padx=(0, 12))
+        self._update_slider_pos_from_hz(self.scale_test_f2, 5000.0)
 
         # Row 2: Continuous Sound Controls, Volume Slider & Live Metrics
         r2 = ttk.Frame(test_ctrls, style='Card.TFrame')
@@ -594,6 +600,15 @@ class FilterDesignApp(tk.Tk):
                 test_f1 = max_f
                 self.var_test_f1.set(f"{test_f1:.1f}")
             self._update_slider_pos_from_hz(self.scale_test_f1, test_f1)
+        except (ValueError, AttributeError):
+            pass
+
+        try:
+            test_f2 = float(self.var_test_f2.get())
+            if test_f2 > max_f:
+                test_f2 = max_f
+                self.var_test_f2.set(f"{test_f2:.1f}")
+            self._update_slider_pos_from_hz(self.scale_test_f2, test_f2)
         except (ValueError, AttributeError):
             pass
 
@@ -1042,10 +1057,49 @@ class FilterDesignApp(tk.Tk):
         except ValueError:
             pass
 
+    def _on_scale_test_f2(self, val):
+        f = self._slider_pos_to_hz(float(val))
+        self.entry_test_f2.delete(0, tk.END)
+        self.entry_test_f2.insert(0, f"{f:.1f}")
+        if getattr(self, '_initialized', False):
+            self._on_test_signal_param_changed()
+
+    def _on_entry_test_f2(self, event=None):
+        try:
+            val = float(self.entry_test_f2.get())
+            self._update_slider_pos_from_hz(self.scale_test_f2, val)
+            if getattr(self, '_initialized', False):
+                self._on_test_signal_param_changed()
+        except ValueError:
+            pass
+
     def _on_test_signal_param_changed(self, event=None):
         if not getattr(self, '_initialized', False):
             return
         sig_type = self.var_test_sig.get()
+        needs_f2 = sig_type in ("Multi-tone", "Sweep (Log)", "Sweep (Linear)")
+
+        if hasattr(self, 'lbl_test_f1') and hasattr(self, 'lbl_test_f2'):
+            if sig_type == "Multi-tone":
+                self.lbl_test_f1.config(text="Tone 1 (Hz):")
+                self.lbl_test_f2.config(text="Tone 2 (Hz):")
+            elif "Sweep" in sig_type:
+                self.lbl_test_f1.config(text="Sweep Start (Hz):")
+                self.lbl_test_f2.config(text="Sweep End (Hz):")
+            elif sig_type == "Periodic Noise":
+                self.lbl_test_f1.config(text="Period Freq (Hz):")
+            else:
+                self.lbl_test_f1.config(text="Frequency (Hz):")
+
+            if needs_f2:
+                self.lbl_test_f2.pack(side=tk.LEFT, padx=(0, 4))
+                self.entry_test_f2.pack(side=tk.LEFT, padx=(0, 4))
+                self.scale_test_f2.pack(side=tk.LEFT, padx=(0, 12))
+            else:
+                self.lbl_test_f2.pack_forget()
+                self.entry_test_f2.pack_forget()
+                self.scale_test_f2.pack_forget()
+
         try:
             f1 = float(self.var_test_f1.get())
         except (ValueError, AttributeError):
