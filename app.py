@@ -55,6 +55,8 @@ class FilterDesignApp(tk.Tk):
         self.ripple_db = 0.5
         self.stopband_db = 40.0
         self.kaiser_beta = 5.0
+        self.gaussian_sigma = 0.4
+        self.tukey_alpha = 0.5
 
         self.current_filter = None
 
@@ -175,8 +177,16 @@ class FilterDesignApp(tk.Tk):
         cb_ftype.bind("<<ComboboxSelected>>", self._on_filter_type_changed)
 
         # Response Type / Window Function
-        self.lbl_response_heading = ttk.Label(sidebar, text="Response Approximation:", style='Card.TLabel')
-        self.lbl_response_heading.pack(anchor='w')
+        f_resp_hdr = ttk.Frame(sidebar, style='Card.TFrame')
+        f_resp_hdr.pack(fill=tk.X)
+        self.lbl_response_heading = ttk.Label(f_resp_hdr, text="Response Approximation:", style='Card.TLabel')
+        self.lbl_response_heading.pack(side=tk.LEFT)
+
+        self.btn_select_window = ttk.Button(f_resp_hdr, text="🔍 Browse Windows...",
+                                            style='Accent.TButton',
+                                            command=self._open_window_selection_dialog)
+        # Hidden initially for IIR, shown for FIR
+
         self.var_response_type = tk.StringVar(value="Butterworth")
         self.cb_rtype = ttk.Combobox(sidebar, textvariable=self.var_response_type,
                                      values=["Butterworth", "Chebyshev I", "Chebyshev II", "Bessel"],
@@ -258,6 +268,16 @@ class FilterDesignApp(tk.Tk):
         self.entry_kaiser = ttk.Entry(self.frame_dynamic_params, width=8)
         self.entry_kaiser.insert(0, "5.0")
         self.entry_kaiser.bind("<Return>", self._on_param_changed)
+
+        self.lbl_gaussian = ttk.Label(self.frame_dynamic_params, text="Gaussian Sigma (0.1 - 1.0):", style='Card.TLabel')
+        self.entry_gaussian = ttk.Entry(self.frame_dynamic_params, width=8)
+        self.entry_gaussian.insert(0, "0.4")
+        self.entry_gaussian.bind("<Return>", self._on_param_changed)
+
+        self.lbl_tukey = ttk.Label(self.frame_dynamic_params, text="Tukey Alpha (0.0 - 1.0):", style='Card.TLabel')
+        self.entry_tukey = ttk.Entry(self.frame_dynamic_params, width=8)
+        self.entry_tukey.insert(0, "0.5")
+        self.entry_tukey.bind("<Return>", self._on_param_changed)
 
         # Checkbox for Phase curve
         self.var_show_phase = tk.BooleanVar(value=False)
@@ -495,7 +515,8 @@ class FilterDesignApp(tk.Tk):
         if "FIR" in raw:
             self.filter_family = 'FIR'
             self.lbl_response_heading.config(text="Window Function:")
-            fir_windows = ["Hamming", "Hann", "Blackman", "Kaiser", "Bartlett", "Rectangular"]
+            self.btn_select_window.pack(side=tk.RIGHT, pady=(0, 2))
+            fir_windows = FIRFilter.KNOWN_WINDOWS
             self.cb_rtype.config(values=fir_windows)
             if self.var_response_type.get() not in fir_windows:
                 self.var_response_type.set("Hamming")
@@ -503,10 +524,11 @@ class FilterDesignApp(tk.Tk):
             # For FIR, order slider controls taps 7 to 255 (odd)
             self.scale_order.config(from_=7, to=255)
             self.scale_order.set(self.fir_taps if self.fir_taps else 65)
-            self.var_order_val.set(str(int(self.scale_order.get())))
+            self.var_order_val.set(f"{int(self.scale_order.get())} taps (ord {int(self.scale_order.get())-1})")
         else:
             self.filter_family = 'IIR'
             self.lbl_response_heading.config(text="Response Approximation:")
+            self.btn_select_window.pack_forget()
             iir_responses = ["Butterworth", "Chebyshev I", "Chebyshev II", "Bessel"]
             self.cb_rtype.config(values=iir_responses)
             if self.var_response_type.get() not in iir_responses:
@@ -575,6 +597,10 @@ class FilterDesignApp(tk.Tk):
         self.entry_stopband.pack_forget()
         self.lbl_kaiser.pack_forget()
         self.entry_kaiser.pack_forget()
+        self.lbl_gaussian.pack_forget()
+        self.entry_gaussian.pack_forget()
+        self.lbl_tukey.pack_forget()
+        self.entry_tukey.pack_forget()
 
         if self.filter_family == 'IIR':
             if self.response_type == 'Chebyshev I':
@@ -584,9 +610,108 @@ class FilterDesignApp(tk.Tk):
                 self.lbl_stopband.pack(anchor='w')
                 self.entry_stopband.pack(fill=tk.X, pady=(2, 6))
         else: # FIR
-            if 'kaiser' in self.response_type.lower():
+            resp_lower = self.response_type.lower()
+            if 'kaiser' in resp_lower:
                 self.lbl_kaiser.pack(anchor='w')
                 self.entry_kaiser.pack(fill=tk.X, pady=(2, 6))
+            elif 'gaussian' in resp_lower:
+                self.lbl_gaussian.pack(anchor='w')
+                self.entry_gaussian.pack(fill=tk.X, pady=(2, 6))
+            elif 'tukey' in resp_lower:
+                self.lbl_tukey.pack(anchor='w')
+                self.entry_tukey.pack(fill=tk.X, pady=(2, 6))
+
+    def _open_window_selection_dialog(self):
+        """Open detailed window function selection & comparison dialog."""
+        dlg = tk.Toplevel(self)
+        dlg.title("Select FIR Window Function")
+        dlg.geometry("520x460")
+        dlg.configure(bg='#f6f8fa')
+        dlg.transient(self)
+        dlg.grab_set()
+
+        hdr = ttk.Frame(dlg, style='Card.TFrame', padding=12)
+        hdr.pack(fill=tk.X)
+        ttk.Label(hdr, text="FIR Window Functions", font=('Segoe UI', 11, 'bold'),
+                  foreground='#0969da').pack(anchor='w')
+        ttk.Label(hdr, text="Choose a window function to control side-lobe suppression and transition roll-off:",
+                  foreground='#57606a', font=('Segoe UI', 9)).pack(anchor='w', pady=(2, 0))
+
+        content_frame = ttk.Frame(dlg, padding=(12, 8))
+        content_frame.pack(fill=tk.BOTH, expand=True)
+
+        list_frame = ttk.Frame(content_frame)
+        list_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+
+        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL)
+        lb_windows = tk.Listbox(list_frame, yscrollcommand=scrollbar.set,
+                                font=('Segoe UI', 10), selectmode=tk.SINGLE,
+                                bg='#ffffff', fg='#24292f',
+                                selectbackground='#0969da', selectforeground='#ffffff',
+                                activestyle='none', relief='flat', borderwidth=1)
+        scrollbar.config(command=lb_windows.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        lb_windows.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        for w in FIRFilter.KNOWN_WINDOWS:
+            lb_windows.insert(tk.END, w)
+
+        cur_win = self.var_response_type.get()
+        if cur_win in FIRFilter.KNOWN_WINDOWS:
+            idx = FIRFilter.KNOWN_WINDOWS.index(cur_win)
+            lb_windows.selection_set(idx)
+            lb_windows.see(idx)
+
+        info_frame = ttk.Frame(content_frame, style='Card.TFrame', padding=10, width=220)
+        info_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        info_frame.pack_propagate(False)
+
+        lbl_win_name = ttk.Label(info_frame, text="Window Details", font=('Segoe UI', 10, 'bold'),
+                                 foreground='#1f2328')
+        lbl_win_name.pack(anchor='w', pady=(0, 6))
+
+        txt_info = tk.Text(info_frame, wrap=tk.WORD, bg='#ffffff', fg='#24292f',
+                           font=('Segoe UI', 9), relief='flat', height=12)
+        txt_info.pack(fill=tk.BOTH, expand=True)
+
+        def update_desc(evt=None):
+            sel = lb_windows.curselection()
+            if sel:
+                chosen = lb_windows.get(sel[0])
+                lbl_win_name.config(text=chosen)
+                desc = FIRFilter.WINDOW_DESCRIPTIONS.get(chosen, "Standard FIR windowing function.")
+                txt_info.delete("1.0", tk.END)
+                txt_info.insert(tk.END, f"{desc}\n\n")
+                if chosen == "Kaiser":
+                    txt_info.insert(tk.END, "Parameters:\n• Beta: controls side-lobe level vs main-lobe width.\nTypical beta: 4.0 (50 dB) to 9.0 (90 dB).")
+                elif chosen == "Gaussian":
+                    txt_info.insert(tk.END, "Parameters:\n• Sigma: standard deviation (0.1 to 1.0).\nSmaller sigma = wider main lobe, lower side lobes.")
+                elif chosen == "Tukey":
+                    txt_info.insert(tk.END, "Parameters:\n• Alpha: fraction of taper (0.0 = Rectangular, 1.0 = Hann).")
+
+        lb_windows.bind("<<ListboxSelect>>", update_desc)
+        update_desc()
+
+        btn_row = ttk.Frame(dlg, padding=12)
+        btn_row.pack(fill=tk.X, side=tk.BOTTOM)
+
+        def apply_choice():
+            sel = lb_windows.curselection()
+            if sel:
+                chosen = lb_windows.get(sel[0])
+                self.var_response_type.set(chosen)
+                self.fir_window = chosen
+                self._update_dynamic_param_visibility()
+                self.recalculate_filter()
+                self.run_test_signal()
+            dlg.destroy()
+
+        lb_windows.bind("<Double-Button-1>", lambda e: apply_choice())
+
+        ttk.Button(btn_row, text="Cancel", style='Accent.TButton',
+                   command=dlg.destroy).pack(side=tk.RIGHT, padx=4)
+        ttk.Button(btn_row, text="✓ Select Window", style='Action.TButton',
+                   command=apply_choice).pack(side=tk.RIGHT, padx=4)
 
     def _on_param_changed(self, event=None):
         self.response_type = self.var_response_type.get()
@@ -609,6 +734,16 @@ class FilterDesignApp(tk.Tk):
             self.kaiser_beta = float(self.entry_kaiser.get())
         except ValueError:
             self.kaiser_beta = 5.0
+
+        try:
+            self.gaussian_sigma = float(self.entry_gaussian.get())
+        except ValueError:
+            self.gaussian_sigma = 0.4
+
+        try:
+            self.tukey_alpha = float(self.entry_tukey.get())
+        except ValueError:
+            self.tukey_alpha = 0.5
 
         self.recalculate_filter()
         self.run_test_signal()
@@ -698,7 +833,9 @@ class FilterDesignApp(tk.Tk):
                     f_cutoff=self.f_cutoff,
                     f_cutoff2=self.f_cutoff2,
                     window_name=self.fir_window,
-                    kaiser_beta=self.kaiser_beta
+                    kaiser_beta=self.kaiser_beta,
+                    gaussian_sigma=self.gaussian_sigma,
+                    tukey_alpha=self.tukey_alpha
                 )
             else:
                 self.current_filter = DigitalFilter(

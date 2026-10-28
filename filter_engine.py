@@ -703,22 +703,66 @@ class FIRFilter:
     Designed using windowed-sinc method (Type I, symmetric odd-length kernel).
     Features exact linear phase and constant group delay = (N - 1) / 2 samples.
     Zero feedback, guaranteed unconditionally stable.
-    Supports windows:
-    - Rectangular
-    - Hamming (default)
+    Supports comprehensive standard window functions:
+    - Hamming
     - Hann (Hanning)
-    - Blackman (high stopband attenuation ~74 dB)
-    - Kaiser (adjustable beta parameter)
-    - Bartlett (triangular)
+    - Blackman
+    - Blackman-Harris (4-term)
+    - Nuttall (4-term)
+    - Flat-Top
+    - Bohman
+    - Parzen
+    - Bartlett (Triangular)
+    - Bartlett-Hann
+    - Tukey (Tapered Cosine)
+    - Kaiser (adjustable beta)
+    - Gaussian (adjustable sigma)
+    - Rectangular (Dirichlet)
     """
+    KNOWN_WINDOWS = [
+        "Hamming",
+        "Hann",
+        "Blackman",
+        "Blackman-Harris",
+        "Nuttall",
+        "Flat-Top",
+        "Bohman",
+        "Parzen",
+        "Bartlett",
+        "Bartlett-Hann",
+        "Tukey",
+        "Kaiser",
+        "Gaussian",
+        "Rectangular"
+    ]
+
+    WINDOW_DESCRIPTIONS = {
+        "Hamming": "General-purpose audio standard, ~53 dB stopband attenuation",
+        "Hann": "Smooth cosine taper, zero endpoints, ~44 dB attenuation",
+        "Blackman": "Classic 3-term window, ~74 dB stopband attenuation",
+        "Blackman-Harris": "4-term minimum 3-term side-lobe window, ~92 dB attenuation",
+        "Nuttall": "Continuous 1st derivative 4-term window, ~93 dB attenuation",
+        "Flat-Top": "Low amplitude ripple in frequency domain, ideal for calibration",
+        "Bohman": "2-convolved half-wave cosines, side lobes decay at 24 dB/oct",
+        "Parzen": "4th-order B-spline window, 24 dB/oct asymptotic decay",
+        "Bartlett": "Triangular window with zero endpoints, ~26 dB attenuation",
+        "Bartlett-Hann": "Combination of triangular and Hann windows",
+        "Tukey": "Cosine-tapered flat-top window (adjustable alpha)",
+        "Kaiser": "Flexible DPSS approximation with adjustable beta parameter",
+        "Gaussian": "Exponential bell curve window with adjustable sigma",
+        "Rectangular": "Unweighted boxcar window with minimum transition bandwidth"
+    }
+
     def __init__(self,
                  filter_type: str,            # 'LPF', 'HPF', 'BPF', 'BSF' (Notch)
                  num_taps: int,               # Number of taps / filter length (odd integer)
                  sample_rate: float,          # Sampling rate (Hz)
                  f_cutoff: float,             # Cutoff frequency 1 (Hz)
                  f_cutoff2: Optional[float] = None, # Cutoff frequency 2 (Hz) for BPF/BSF
-                 window_name: str = 'Hamming',# 'Hamming', 'Hann', 'Blackman', 'Kaiser', 'Rectangular', 'Bartlett'
-                 kaiser_beta: float = 5.0):
+                 window_name: str = 'Hamming',
+                 kaiser_beta: float = 5.0,
+                 gaussian_sigma: float = 0.4,
+                 tukey_alpha: float = 0.5):
         self.filter_family = 'FIR'
         self.filter_type = filter_type.upper()
         self.window_name = window_name
@@ -732,6 +776,8 @@ class FIRFilter:
         self.f_cutoff = float(f_cutoff)
         self.f_cutoff2 = float(f_cutoff2) if f_cutoff2 is not None else self.f_cutoff * 2.0
         self.kaiser_beta = float(kaiser_beta)
+        self.gaussian_sigma = float(gaussian_sigma)
+        self.tukey_alpha = float(tukey_alpha)
         self.ripple_db = 0.0
         self.stopband_db = 0.0
 
@@ -755,6 +801,8 @@ class FIRFilter:
         f.f_cutoff = self.f_cutoff
         f.f_cutoff2 = self.f_cutoff2
         f.kaiser_beta = self.kaiser_beta
+        f.gaussian_sigma = self.gaussian_sigma
+        f.tukey_alpha = self.tukey_alpha
         f.ripple_db = self.ripple_db
         f.stopband_db = self.stopband_db
         f.taps = list(self.taps)
@@ -801,27 +849,66 @@ class FIRFilter:
         # 1. Compute Window function w[n]
         w = [0.0] * N
         n_minus_1 = max(1, N - 1)
-        w_name = self.window_name.lower()
-        if 'rect' in w_name:
-            w = [1.0] * N
-        elif 'hann' in w_name:
-            for i in range(N):
-                w[i] = 0.50 - 0.50 * math.cos(2.0 * math.pi * i / n_minus_1)
-        elif 'blackman' in w_name:
-            for i in range(N):
-                w[i] = 0.42 - 0.50 * math.cos(2.0 * math.pi * i / n_minus_1) + 0.08 * math.cos(4.0 * math.pi * i / n_minus_1)
-        elif 'kaiser' in w_name:
-            i0_beta = self._besseli0(self.kaiser_beta)
-            for i in range(N):
-                q = (2.0 * i / n_minus_1) - 1.0
+        two_pi = 2.0 * math.pi
+        w_clean = self.window_name.lower().replace(' ', '').replace('-', '').replace('_', '')
+
+        for i in range(N):
+            x = two_pi * i / n_minus_1
+            q = (2.0 * i / n_minus_1) - 1.0
+
+            if 'rect' in w_clean:
+                w[i] = 1.0
+            elif 'hann' in w_clean and 'bartlett' not in w_clean:
+                w[i] = 0.50 - 0.50 * math.cos(x)
+            elif 'hamming' in w_clean:
+                w[i] = 0.54 - 0.46 * math.cos(x)
+            elif 'blackmanharris' in w_clean:
+                w[i] = 0.35875 - 0.48829 * math.cos(x) + 0.14128 * math.cos(2 * x) - 0.01168 * math.cos(3 * x)
+            elif 'blackman' in w_clean:
+                w[i] = 0.42 - 0.50 * math.cos(x) + 0.08 * math.cos(2 * x)
+            elif 'nuttall' in w_clean:
+                w[i] = 0.355768 - 0.487396 * math.cos(x) + 0.144232 * math.cos(2 * x) - 0.012604 * math.cos(3 * x)
+            elif 'flattop' in w_clean:
+                w[i] = (0.21557895 - 0.41663158 * math.cos(x) + 0.277263158 * math.cos(2 * x)
+                        - 0.083578947 * math.cos(3 * x) + 0.006947368 * math.cos(4 * x))
+            elif 'bohman' in w_clean:
+                t = abs(q)
+                w[i] = (1.0 - t) * math.cos(math.pi * t) + (1.0 / math.pi) * math.sin(math.pi * t) if t <= 1.0 else 0.0
+            elif 'parzen' in w_clean:
+                t = abs(q)
+                if t <= 0.5:
+                    w[i] = 1.0 - 6.0 * (t ** 2) + 6.0 * (t ** 3)
+                elif t <= 1.0:
+                    w[i] = 2.0 * ((1.0 - t) ** 3)
+                else:
+                    w[i] = 0.0
+            elif 'bartletthann' in w_clean:
+                w[i] = 0.62 - 0.48 * abs(i / n_minus_1 - 0.5) - 0.38 * math.cos(x)
+            elif 'bartlett' in w_clean or 'triang' in w_clean:
+                w[i] = 1.0 - abs(q)
+            elif 'kaiser' in w_clean:
+                i0_beta = self._besseli0(self.kaiser_beta)
                 val = self.kaiser_beta * math.sqrt(max(0.0, 1.0 - q * q))
                 w[i] = self._besseli0(val) / i0_beta
-        elif 'bartlett' in w_name or 'triang' in w_name:
-            for i in range(N):
-                w[i] = 1.0 - abs(2.0 * i / n_minus_1 - 1.0)
-        else:  # Default: Hamming
-            for i in range(N):
-                w[i] = 0.54 - 0.46 * math.cos(2.0 * math.pi * i / n_minus_1)
+            elif 'gaussian' in w_clean:
+                sigma = max(0.01, min(1.0, self.gaussian_sigma))
+                w[i] = math.exp(-0.5 * ((q / sigma) ** 2))
+            elif 'tukey' in w_clean:
+                alpha = max(0.0, min(1.0, self.tukey_alpha))
+                if alpha <= 0.0:
+                    w[i] = 1.0
+                elif alpha >= 1.0:
+                    w[i] = 0.50 - 0.50 * math.cos(x)
+                else:
+                    pos = i / n_minus_1
+                    if pos < alpha / 2.0:
+                        w[i] = 0.5 * (1.0 + math.cos(math.pi * (2.0 * pos / alpha - 1.0)))
+                    elif pos <= 1.0 - alpha / 2.0:
+                        w[i] = 1.0
+                    else:
+                        w[i] = 0.5 * (1.0 + math.cos(math.pi * (2.0 * pos / alpha - 2.0 / alpha + 1.0)))
+            else:  # Default: Hamming
+                w[i] = 0.54 - 0.46 * math.cos(x)
 
         # 2. Compute Ideal Sinc Kernel
         h = [0.0] * N

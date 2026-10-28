@@ -172,6 +172,21 @@ class TestFilterEngine(unittest.TestCase):
             out = fir.process_block([0.5, -0.5, 0.2])
             self.assertEqual(len(out), 3)
 
+    def test_fir_comprehensive_windows(self):
+        for w in FIRFilter.KNOWN_WINDOWS:
+            fir = FIRFilter('LPF', 33, 48000, 1200, window_name=w,
+                            kaiser_beta=6.0, gaussian_sigma=0.35, tukey_alpha=0.4)
+            self.assertEqual(len(fir.taps), 33)
+            # Verify finite and non-NaN values
+            for tap in fir.taps:
+                self.assertFalse(math.isnan(tap))
+                self.assertFalse(math.isinf(tap))
+            mags, phases, gd = fir.frequency_response([100.0, 1200.0, 5000.0])
+            self.assertEqual(len(mags), 3)
+            # Verify linear phase constant group delay
+            for g in gd:
+                self.assertAlmostEqual(g, 16.0, places=4)
+
 
 class TestSignalTestbench(unittest.TestCase):
     def test_audio_to_wav_bytes_applies_volume(self):

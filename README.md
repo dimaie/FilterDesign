@@ -11,7 +11,21 @@ An interactive Python desktop application for designing digital audio filters wi
      - **IIR (Infinite Impulse Response)**: Analog prototype bilinear transform biquad cascades (Butterworth, Chebyshev Type I, Chebyshev Type II, Bessel) up to 10th order (20th order for band filters).
      - **FIR (Finite Impulse Response)**: Linear-phase windowed-sinc Type I symmetric FIR filters (7 to 255 taps) featuring exact linear phase and constant group delay for zero phase distortion.
    - **Filter Topologies**: Low-Pass (LPF), High-Pass (HPF), Band-Pass (BPF), Band-Stop / Notch (BSF).
-   - **FIR Windows**: Hamming, Hann, Blackman, Kaiser (with adjustable $\beta$), Bartlett, Rectangular.
+   - **Comprehensive FIR Window Functions**: 14 standard window functions with dedicated selection browser dialog:
+     - **Hamming**: Balanced general audio standard (~53 dB attenuation)
+     - **Hann (Hanning)**: Smooth cosine bell with zero endpoints (~44 dB attenuation)
+     - **Blackman**: Classic 3-term window (~74 dB stopband attenuation)
+     - **Blackman-Harris**: 4-term minimum side-lobe window (~92 dB attenuation)
+     - **Nuttall**: Continuous 1st-derivative 4-term window (~93 dB attenuation)
+     - **Flat-Top**: Ultra-flat passband amplitude response (calibration standard)
+     - **Bohman**: Convolved half-wave cosines with 24 dB/octave decay
+     - **Parzen**: 4th-order B-spline with 24 dB/octave decay
+     - **Bartlett**: Triangular window with zero endpoints (~26 dB attenuation)
+     - **Bartlett-Hann**: Modified combination of Bartlett and Hann
+     - **Tukey (Tapered Cosine)**: Cosine-tapered boxcar with adjustable taper fraction ($\alpha$)
+     - **Kaiser**: Flexible DPSS approximation with adjustable shape parameter ($\beta$)
+     - **Gaussian**: Bell-curve window with adjustable standard deviation ($\sigma$)
+     - **Rectangular**: Dirichlet boxcar with narrowest transition band
    - **Sample Rates**: 44.1 kHz, 48 kHz, 88.2 kHz, 96 kHz, 192 kHz, etc.
 
 2. **User-Friendly Drag-and-Drop Graphical Interaction**:
