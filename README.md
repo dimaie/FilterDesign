@@ -6,14 +6,12 @@ An interactive Python desktop application for designing digital audio filters wi
 
 ## Features
 
-1. **Comprehensive Filter Topologies & Responses**:
-   - **Filter Types**: Low-Pass (LPF), High-Pass (HPF), Band-Pass (BPF), Band-Stop / Notch (BSF).
-   - **Response Approximations**:
-     - **Butterworth**: Maximally flat passband response.
-     - **Chebyshev Type I**: Steep roll-off with adjustable passband ripple ($dB$).
-     - **Chebyshev Type II (Inverse Chebyshev)**: Flat passband with adjustable stopband attenuation ($dB$) and transmission zeros.
-     - **Bessel**: Maximally flat group delay and linear phase response for minimal audio transient distortion.
-   - **Filter Orders**: 1st through 10th order (cascaded 2nd-order Biquad sections for maximum numerical stability).
+1. **Dual Filter Architectures (IIR & FIR)**:
+   - **Filter Architectures**:
+     - **IIR (Infinite Impulse Response)**: Analog prototype bilinear transform biquad cascades (Butterworth, Chebyshev Type I, Chebyshev Type II, Bessel) up to 10th order (20th order for band filters).
+     - **FIR (Finite Impulse Response)**: Linear-phase windowed-sinc Type I symmetric FIR filters (7 to 255 taps) featuring exact linear phase and constant group delay for zero phase distortion.
+   - **Filter Topologies**: Low-Pass (LPF), High-Pass (HPF), Band-Pass (BPF), Band-Stop / Notch (BSF).
+   - **FIR Windows**: Hamming, Hann, Blackman, Kaiser (with adjustable $\beta$), Bartlett, Rectangular.
    - **Sample Rates**: 44.1 kHz, 48 kHz, 88.2 kHz, 96 kHz, 192 kHz, etc.
 
 2. **User-Friendly Drag-and-Drop Graphical Interaction**:

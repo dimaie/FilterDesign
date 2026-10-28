@@ -296,6 +296,7 @@ class DigitalFilter:
                  f_cutoff2: Optional[float] = None, # Second cutoff for BPF/BSF (f1, f2)
                  ripple_db: float = 1.0,            # Chebyshev I ripple
                  stopband_db: float = 40.0):        # Chebyshev II stopband attenuation
+        self.filter_family = 'IIR'
         self.filter_type = filter_type.upper()
         self.response_type = response_type
         self.order = max(1, min(12, int(order)))
@@ -508,6 +509,7 @@ class DigitalFilter:
     def clone(self) -> 'DigitalFilter':
         """Create a clone of this digital filter with independent section states."""
         f = DigitalFilter.__new__(DigitalFilter)
+        f.filter_family = getattr(self, 'filter_family', 'IIR')
         f.filter_type = self.filter_type
         f.response_type = self.response_type
         f.order = self.order
@@ -693,3 +695,306 @@ class DigitalFilter:
         c_code.append("#endif\n")
 
         return "\n".join(c_code)
+
+
+class FIRFilter:
+    """
+    Linear-Phase Finite Impulse Response (FIR) Filter.
+    Designed using windowed-sinc method (Type I, symmetric odd-length kernel).
+    Features exact linear phase and constant group delay = (N - 1) / 2 samples.
+    Zero feedback, guaranteed unconditionally stable.
+    Supports windows:
+    - Rectangular
+    - Hamming (default)
+    - Hann (Hanning)
+    - Blackman (high stopband attenuation ~74 dB)
+    - Kaiser (adjustable beta parameter)
+    - Bartlett (triangular)
+    """
+    def __init__(self,
+                 filter_type: str,            # 'LPF', 'HPF', 'BPF', 'BSF' (Notch)
+                 num_taps: int,               # Number of taps / filter length (odd integer)
+                 sample_rate: float,          # Sampling rate (Hz)
+                 f_cutoff: float,             # Cutoff frequency 1 (Hz)
+                 f_cutoff2: Optional[float] = None, # Cutoff frequency 2 (Hz) for BPF/BSF
+                 window_name: str = 'Hamming',# 'Hamming', 'Hann', 'Blackman', 'Kaiser', 'Rectangular', 'Bartlett'
+                 kaiser_beta: float = 5.0):
+        self.filter_family = 'FIR'
+        self.filter_type = filter_type.upper()
+        self.window_name = window_name
+        self.response_type = f"FIR ({window_name})"
+        n = int(num_taps)
+        if n % 2 == 0:
+            n += 1
+        self.num_taps = max(3, min(511, n))
+        self.order = self.num_taps - 1
+        self.sample_rate = float(sample_rate)
+        self.f_cutoff = float(f_cutoff)
+        self.f_cutoff2 = float(f_cutoff2) if f_cutoff2 is not None else self.f_cutoff * 2.0
+        self.kaiser_beta = float(kaiser_beta)
+        self.ripple_db = 0.0
+        self.stopband_db = 0.0
+
+        self.taps: List[float] = []
+        self.sections: List[BiquadSection] = []  # Empty for FIR
+        self.buffer = [0.0] * (self.num_taps * 2)
+        self.buf_idx = self.num_taps
+
+        self.design()
+
+    def clone(self) -> 'FIRFilter':
+        """Clone FIR filter with independent state."""
+        f = FIRFilter.__new__(FIRFilter)
+        f.filter_family = 'FIR'
+        f.filter_type = self.filter_type
+        f.window_name = self.window_name
+        f.response_type = self.response_type
+        f.num_taps = self.num_taps
+        f.order = self.order
+        f.sample_rate = self.sample_rate
+        f.f_cutoff = self.f_cutoff
+        f.f_cutoff2 = self.f_cutoff2
+        f.kaiser_beta = self.kaiser_beta
+        f.ripple_db = self.ripple_db
+        f.stopband_db = self.stopband_db
+        f.taps = list(self.taps)
+        f.sections = []
+        f.buffer = list(self.buffer)
+        f.buf_idx = self.buf_idx
+        return f
+
+    def reset(self):
+        """Clear delay-line history."""
+        self.buffer = [0.0] * (self.num_taps * 2)
+        self.buf_idx = self.num_taps
+
+    @staticmethod
+    def _besseli0(x: float) -> float:
+        """Modified Bessel function of the first kind, order 0 (for Kaiser window)."""
+        ax = abs(x)
+        if ax < 3.75:
+            y = (x / 3.75) ** 2
+            return 1.0 + y * (3.5156229 + y * (3.0899424 + y * (1.2067492 +
+                   y * (0.2659732 + y * (0.360768e-1 + y * 0.45813e-2)))))
+        else:
+            y = 3.75 / ax
+            return (math.exp(ax) / math.sqrt(ax)) * (0.39894228 + y * (0.1328592e-1 +
+                   y * (0.225319e-2 + y * (-0.157565e-2 + y * (0.916281e-2 +
+                   y * (-0.2057706e-1 + y * (0.2635537e-1 + y * (-0.1647633e-1 +
+                   y * 0.392377e-2))))))))
+
+    def design(self):
+        """Compute windowed-sinc impulse response taps."""
+        N = self.num_taps
+        M = (N - 1) / 2.0
+        fs = self.sample_rate
+        nyquist = fs / 2.0
+
+        f1 = max(10.0, min(self.f_cutoff, nyquist * 0.99))
+        f2 = max(10.0, min(self.f_cutoff2, nyquist * 0.99))
+        if f1 > f2:
+            f1, f2 = f2, f1
+
+        wc1 = 2.0 * math.pi * f1 / fs
+        wc2 = 2.0 * math.pi * f2 / fs
+
+        # 1. Compute Window function w[n]
+        w = [0.0] * N
+        n_minus_1 = max(1, N - 1)
+        w_name = self.window_name.lower()
+        if 'rect' in w_name:
+            w = [1.0] * N
+        elif 'hann' in w_name:
+            for i in range(N):
+                w[i] = 0.50 - 0.50 * math.cos(2.0 * math.pi * i / n_minus_1)
+        elif 'blackman' in w_name:
+            for i in range(N):
+                w[i] = 0.42 - 0.50 * math.cos(2.0 * math.pi * i / n_minus_1) + 0.08 * math.cos(4.0 * math.pi * i / n_minus_1)
+        elif 'kaiser' in w_name:
+            i0_beta = self._besseli0(self.kaiser_beta)
+            for i in range(N):
+                q = (2.0 * i / n_minus_1) - 1.0
+                val = self.kaiser_beta * math.sqrt(max(0.0, 1.0 - q * q))
+                w[i] = self._besseli0(val) / i0_beta
+        elif 'bartlett' in w_name or 'triang' in w_name:
+            for i in range(N):
+                w[i] = 1.0 - abs(2.0 * i / n_minus_1 - 1.0)
+        else:  # Default: Hamming
+            for i in range(N):
+                w[i] = 0.54 - 0.46 * math.cos(2.0 * math.pi * i / n_minus_1)
+
+        # 2. Compute Ideal Sinc Kernel
+        h = [0.0] * N
+        for n in range(N):
+            k = n - M
+            if abs(k) < 1e-9:
+                sinc1 = wc1 / math.pi
+                sinc2 = wc2 / math.pi
+            else:
+                sinc1 = math.sin(wc1 * k) / (math.pi * k)
+                sinc2 = math.sin(wc2 * k) / (math.pi * k)
+
+            if self.filter_type == 'LPF':
+                ideal = sinc1
+            elif self.filter_type == 'HPF':
+                delta = 1.0 if abs(k) < 1e-9 else 0.0
+                ideal = delta - sinc1
+            elif self.filter_type == 'BPF':
+                ideal = sinc2 - sinc1
+            elif self.filter_type in ('BSF', 'NOTCH'):
+                delta = 1.0 if abs(k) < 1e-9 else 0.0
+                ideal = delta - (sinc2 - sinc1)
+            else:
+                ideal = sinc1
+
+            h[n] = ideal * w[n]
+
+        # 3. Normalize Gain at Center of Passband
+        if self.filter_type in ('LPF', 'BSF'):
+            eval_f = 0.0
+        elif self.filter_type == 'HPF':
+            eval_f = nyquist * 0.99
+        else:  # BPF
+            eval_f = math.sqrt(f1 * f2)
+
+        w_eval = 2.0 * math.pi * eval_f / fs
+        H_eval = sum(h[n] * cmath.exp(-1j * w_eval * n) for n in range(N))
+        gain = abs(H_eval)
+        if gain > 1e-9:
+            h = [val / gain for val in h]
+
+        self.taps = h
+
+    def process_sample(self, x: float) -> float:
+        """Process one sample through circular delay buffer."""
+        N = self.num_taps
+        buf = self.buffer
+        idx = self.buf_idx
+        buf[idx] = x
+        buf[idx - N] = x
+        taps = self.taps
+        acc = sum(taps[i] * buf[idx - i] for i in range(N))
+        idx += 1
+        if idx >= 2 * N:
+            idx = N
+        self.buf_idx = idx
+        return acc
+
+    def process_block(self, samples: List[float]) -> List[float]:
+        """Process an array of audio samples through FIR delay line."""
+        N = self.num_taps
+        buf = self.buffer
+        idx = self.buf_idx
+        taps = self.taps
+        out = [0.0] * len(samples)
+        for s_idx, x in enumerate(samples):
+            buf[idx] = x
+            buf[idx - N] = x
+            acc = sum(taps[i] * buf[idx - i] for i in range(N))
+            out[s_idx] = acc
+            idx += 1
+            if idx >= 2 * N:
+                idx = N
+        self.buf_idx = idx
+        return out
+
+    def frequency_response(self, freqs: List[float]) -> Tuple[List[float], List[float], List[float]]:
+        """
+        Evaluate magnitude (dB), phase (degrees), and group delay for freqs (Hz).
+        For linear-phase FIR of length N, group delay is exactly constant: (N - 1) / 2 samples.
+        """
+        mag_db = []
+        phase_deg = []
+        group_delays = []
+        N = self.num_taps
+        M = (N - 1) / 2.0
+        two_pi = 2.0 * math.pi
+        sr = self.sample_rate
+
+        for f in freqs:
+            w = two_pi * f / sr
+            H = sum(self.taps[n] * cmath.exp(-1j * w * n) for n in range(N))
+            mag = max(abs(H), 1e-12)
+            mag_db.append(20.0 * math.log10(mag))
+            phase = math.atan2(H.imag, H.real)
+            phase_deg.append(math.degrees(phase))
+            group_delays.append(M)
+
+        return mag_db, phase_deg, group_delays
+
+    def get_direct_form_coefficients(self) -> Tuple[List[float], List[float]]:
+        """Return feedforward coefficients [b0, b1, ..., b_{N-1}] and feedback [1.0]."""
+        return list(self.taps), [1.0]
+
+    def generate_c_code(self, filter_var_name: str = "fir_filter") -> str:
+        """
+        Generate standalone ANSI C99 code for this Linear-Phase FIR filter.
+        Uses double-buffer unrolled circular delay line for maximum performance.
+        Zero external libraries.
+        """
+        N = self.num_taps
+        lines = []
+        lines.append("/*")
+        lines.append(f" * Generated C Audio Filter: {self.response_type} {self.filter_type}")
+        lines.append(f" * Number of Taps: {N}, Order: {self.order}, Sample Rate: {self.sample_rate:.1f} Hz")
+        if self.filter_type in ('LPF', 'HPF'):
+            lines.append(f" * Cutoff: {self.f_cutoff:.2f} Hz")
+        else:
+            lines.append(f" * Cutoff 1: {self.f_cutoff:.2f} Hz, Cutoff 2: {self.f_cutoff2:.2f} Hz")
+        lines.append(" * Type: Linear-Phase Finite Impulse Response (FIR)")
+        lines.append(f" * Group Delay: {(N - 1) / 2.0:.1f} samples (constant)")
+        lines.append(" * Standalone ANSI C99 - Zero external dependencies")
+        lines.append(" */\n")
+        lines.append("#include <stddef.h>\n")
+        lines.append(f"#define {filter_var_name.upper()}_NUM_TAPS {N}\n")
+        lines.append("typedef struct {")
+        lines.append(f"    float buffer[{filter_var_name.upper()}_NUM_TAPS * 2];")
+        lines.append("    size_t buf_idx;")
+        lines.append("} FIRFilter;\n")
+        lines.append(f"static const float {filter_var_name.upper()}_TAPS[{filter_var_name.upper()}_NUM_TAPS] = {{")
+        for i, tap in enumerate(self.taps):
+            comment = f" /* tap {i} */" if (i % 4 == 0 or i == N - 1) else ""
+            lines.append(f"    {tap:.9e}f,{comment}")
+        lines.append("};\n")
+        lines.append(f"static void {filter_var_name}_init(FIRFilter *f) {{")
+        lines.append(f"    for (size_t i = 0; i < {filter_var_name.upper()}_NUM_TAPS * 2; ++i) {{")
+        lines.append("        f->buffer[i] = 0.0f;")
+        lines.append("    }")
+        lines.append(f"    f->buf_idx = {filter_var_name.upper()}_NUM_TAPS;")
+        lines.append("}\n")
+        lines.append(f"static void {filter_var_name}_reset(FIRFilter *f) {{")
+        lines.append(f"    {filter_var_name}_init(f);")
+        lines.append("}\n")
+        lines.append(f"static float {filter_var_name}_process_sample(FIRFilter *f, float in_sample) {{")
+        lines.append("    size_t idx = f->buf_idx;")
+        lines.append("    f->buffer[idx] = in_sample;")
+        lines.append(f"    f->buffer[idx - {filter_var_name.upper()}_NUM_TAPS] = in_sample;")
+        lines.append("    float acc = 0.0f;")
+        lines.append(f"    for (size_t i = 0; i < {filter_var_name.upper()}_NUM_TAPS; ++i) {{")
+        lines.append(f"        acc += {filter_var_name.upper()}_TAPS[i] * f->buffer[idx - i];")
+        lines.append("    }")
+        lines.append("    idx++;")
+        lines.append(f"    if (idx >= {filter_var_name.upper()}_NUM_TAPS * 2) idx = {filter_var_name.upper()}_NUM_TAPS;")
+        lines.append("    f->buf_idx = idx;")
+        lines.append("    return acc;")
+        lines.append("}\n")
+        lines.append(f"static void {filter_var_name}_process_block(FIRFilter *f, const float *in, float *out, size_t count) {{")
+        lines.append("    for (size_t n = 0; n < count; ++n) {")
+        lines.append(f"        out[n] = {filter_var_name}_process_sample(f, in[n]);")
+        lines.append("    }")
+        lines.append("}\n")
+        lines.append("#ifdef TEST_FILTER_STANDALONE")
+        lines.append("#include <stdio.h>")
+        lines.append("int main(void) {")
+        lines.append("    FIRFilter filter;")
+        lines.append(f"    {filter_var_name}_init(&filter);")
+        lines.append("    printf(\"FIR filter initialized! Running impulse test:\\n\");")
+        lines.append("    for (int i = 0; i < 16; ++i) {")
+        lines.append("        float x = (i == 0) ? 1.0f : 0.0f;")
+        lines.append(f"        float y = {filter_var_name}_process_sample(&filter, x);")
+        lines.append("        printf(\"y[%2d] = %+.6f\\n\", i, y);")
+        lines.append("    }")
+        lines.append("    return 0;")
+        lines.append("}")
+        lines.append("#endif\n")
+        return "\n".join(lines)

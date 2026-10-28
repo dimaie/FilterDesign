@@ -18,7 +18,7 @@ import csv
 import io
 import wave
 
-from filter_engine import (DigitalFilter, butterworth_analog_poles,
+from filter_engine import (DigitalFilter, FIRFilter, butterworth_analog_poles,
                            chebyshev1_analog_poles, chebyshev2_analog_poles_zeros,
                            bessel_analog_poles, BiquadSection)
 from signal_testbench import (generate_signal, compute_fft, export_data_to_csv,
@@ -130,6 +130,47 @@ class TestFilterEngine(unittest.TestCase):
         # Modify cloned state and verify original is untouched
         cloned.sections[0].s1 = 42.0
         self.assertEqual(filt.sections[0].s1, 0.0)
+
+    def test_fir_filter_design_and_processing(self):
+        # Design FIR LPF 65 taps
+        fir = FIRFilter('LPF', 65, 48000, 1000, window_name='Hamming')
+        self.assertEqual(fir.num_taps, 65)
+        self.assertEqual(fir.order, 64)
+        self.assertEqual(fir.filter_family, 'FIR')
+
+        # Linear phase property: Group delay must be exactly (N-1)/2 samples = 32.0
+        freqs = [10.0, 500.0, 1000.0, 8000.0]
+        mags, phases, gd = fir.frequency_response(freqs)
+        for g in gd:
+            self.assertAlmostEqual(g, 32.0, places=4)
+
+        # Passband gain ~ 0 dB, stopband strong attenuation
+        self.assertAlmostEqual(mags[0], 0.0, delta=0.5)
+        self.assertLess(mags[-1], -40.0)
+
+        # Test block processing
+        samples_in = [0.1] * 128
+        out = fir.process_block(samples_in)
+        self.assertEqual(len(out), 128)
+
+        # Test clone
+        cloned_fir = fir.clone()
+        self.assertEqual(cloned_fir.num_taps, 65)
+        self.assertEqual(cloned_fir.taps, fir.taps)
+
+        # Test C code generation
+        c_code = fir.generate_c_code("test_fir")
+        self.assertIn("FIRFilter", c_code)
+        self.assertIn("test_fir_process_sample", c_code)
+        self.assertIn("test_fir_init", c_code)
+
+    def test_fir_filter_types(self):
+        for ft in ['LPF', 'HPF', 'BPF', 'BSF']:
+            fir = FIRFilter(ft, 45, 48000, 1000, f_cutoff2=4000, window_name='Hann')
+            self.assertEqual(fir.filter_type, ft)
+            self.assertEqual(fir.num_taps, 45)
+            out = fir.process_block([0.5, -0.5, 0.2])
+            self.assertEqual(len(out), 3)
 
 
 class TestSignalTestbench(unittest.TestCase):

@@ -24,7 +24,7 @@ from typing import Optional, List
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
-from filter_engine import DigitalFilter
+from filter_engine import DigitalFilter, FIRFilter
 from filter_canvas import InteractiveResponseCanvas
 from signal_testbench import (generate_signal, compute_fft,
                               export_data_to_csv, export_data_to_json, export_audio_to_wav,
@@ -44,15 +44,19 @@ class FilterDesignApp(tk.Tk):
 
         # Application State
         self.sample_rate = 48000.0
+        self.filter_family = 'IIR'  # 'IIR' or 'FIR'
         self.filter_type = 'LPF'
         self.response_type = 'Butterworth'
         self.order = 4
+        self.fir_taps = 65
+        self.fir_window = 'Hamming'
         self.f_cutoff = 1000.0
         self.f_cutoff2 = 4000.0
         self.ripple_db = 0.5
         self.stopband_db = 40.0
+        self.kaiser_beta = 5.0
 
-        self.current_filter: Optional[DigitalFilter] = None
+        self.current_filter = None
 
         # Test mode data cache
         self.test_time = []
@@ -152,6 +156,16 @@ class FilterDesignApp(tk.Tk):
         lbl_sec1 = ttk.Label(sidebar, text="FILTER SPECIFICATIONS", style='Header.TLabel')
         lbl_sec1.pack(anchor='w', pady=(0, 8))
 
+        # Filter Architecture (IIR vs FIR)
+        ttk.Label(sidebar, text="Filter Architecture:", style='Card.TLabel').pack(anchor='w')
+        self.var_filter_family = tk.StringVar(value="IIR (Infinite Impulse Response)")
+        self.cb_family = ttk.Combobox(sidebar, textvariable=self.var_filter_family,
+                                      values=["IIR (Infinite Impulse Response)",
+                                              "FIR (Finite Impulse Response)"],
+                                      state="readonly")
+        self.cb_family.pack(fill=tk.X, pady=(2, 8))
+        self.cb_family.bind("<<ComboboxSelected>>", self._on_filter_family_changed)
+
         # Filter Type (LPF, HPF, BPF, BSF)
         ttk.Label(sidebar, text="Filter Type:", style='Card.TLabel').pack(anchor='w')
         self.var_filter_type = tk.StringVar(value="LPF")
@@ -160,28 +174,30 @@ class FilterDesignApp(tk.Tk):
         cb_ftype.pack(fill=tk.X, pady=(2, 8))
         cb_ftype.bind("<<ComboboxSelected>>", self._on_filter_type_changed)
 
-        # Response Type (Butterworth, Chebyshev I, Chebyshev II, Bessel)
-        ttk.Label(sidebar, text="Response Approximation:", style='Card.TLabel').pack(anchor='w')
+        # Response Type / Window Function
+        self.lbl_response_heading = ttk.Label(sidebar, text="Response Approximation:", style='Card.TLabel')
+        self.lbl_response_heading.pack(anchor='w')
         self.var_response_type = tk.StringVar(value="Butterworth")
-        cb_rtype = ttk.Combobox(sidebar, textvariable=self.var_response_type,
-                                values=["Butterworth", "Chebyshev I", "Chebyshev II", "Bessel"],
-                                state="readonly")
-        cb_rtype.pack(fill=tk.X, pady=(2, 8))
-        cb_rtype.bind("<<ComboboxSelected>>", self._on_param_changed)
+        self.cb_rtype = ttk.Combobox(sidebar, textvariable=self.var_response_type,
+                                     values=["Butterworth", "Chebyshev I", "Chebyshev II", "Bessel"],
+                                     state="readonly")
+        self.cb_rtype.pack(fill=tk.X, pady=(2, 8))
+        self.cb_rtype.bind("<<ComboboxSelected>>", self._on_param_changed)
 
-        # Filter Order
-        f_order_row = ttk.Frame(sidebar, style='Card.TFrame')
-        f_order_row.pack(fill=tk.X, pady=(0, 8))
-        ttk.Label(f_order_row, text="Order:", style='Card.TLabel').pack(side=tk.LEFT)
+        # Filter Order / Tap Count
+        self.f_order_row = ttk.Frame(sidebar, style='Card.TFrame')
+        self.f_order_row.pack(fill=tk.X, pady=(0, 4))
+        self.lbl_order_title = ttk.Label(self.f_order_row, text="Order:", style='Card.TLabel')
+        self.lbl_order_title.pack(side=tk.LEFT)
         self.var_order_val = tk.StringVar(value="4")
-        self.lbl_order_num = ttk.Label(f_order_row, textvariable=self.var_order_val,
+        self.lbl_order_num = ttk.Label(self.f_order_row, textvariable=self.var_order_val,
                                        foreground='#0969da', font=('Segoe UI', 9, 'bold'))
         self.lbl_order_num.pack(side=tk.RIGHT)
 
         self.scale_order = ttk.Scale(sidebar, from_=1, to=10, style='TScale',
                                      command=self._on_order_scale)
         self.scale_order.set(4)
-        self.scale_order.pack(fill=tk.X, pady=(0, 10))
+        self.scale_order.pack(fill=tk.X, pady=(0, 8))
 
         # Sample Rate
         ttk.Label(sidebar, text="Sample Rate (Hz):", style='Card.TLabel').pack(anchor='w')
@@ -224,7 +240,7 @@ class FilterDesignApp(tk.Tk):
                                    command=self._on_scale_fc2)
         self._update_slider_pos_from_hz(self.scale_fc2, 4000.0)
 
-        # Dynamic Ripple / Stopband options
+        # Dynamic Ripple / Stopband / Kaiser Beta options
         self.frame_dynamic_params = ttk.Frame(sidebar, style='Card.TFrame')
         self.frame_dynamic_params.pack(fill=tk.X, pady=(0, 10))
 
@@ -237,6 +253,11 @@ class FilterDesignApp(tk.Tk):
         self.entry_stopband = ttk.Entry(self.frame_dynamic_params, width=8)
         self.entry_stopband.insert(0, "40.0")
         self.entry_stopband.bind("<Return>", self._on_param_changed)
+
+        self.lbl_kaiser = ttk.Label(self.frame_dynamic_params, text="Kaiser Beta:", style='Card.TLabel')
+        self.entry_kaiser = ttk.Entry(self.frame_dynamic_params, width=8)
+        self.entry_kaiser.insert(0, "5.0")
+        self.entry_kaiser.bind("<Return>", self._on_param_changed)
 
         # Checkbox for Phase curve
         self.var_show_phase = tk.BooleanVar(value=False)
@@ -469,9 +490,71 @@ class FilterDesignApp(tk.Tk):
         self.recalculate_filter()
         self.run_test_signal()
 
+    def _on_filter_family_changed(self, event=None):
+        raw = self.var_filter_family.get()
+        if "FIR" in raw:
+            self.filter_family = 'FIR'
+            self.lbl_response_heading.config(text="Window Function:")
+            fir_windows = ["Hamming", "Hann", "Blackman", "Kaiser", "Bartlett", "Rectangular"]
+            self.cb_rtype.config(values=fir_windows)
+            if self.var_response_type.get() not in fir_windows:
+                self.var_response_type.set("Hamming")
+            self.lbl_order_title.config(text="Taps (Length):")
+            # For FIR, order slider controls taps 7 to 255 (odd)
+            self.scale_order.config(from_=7, to=255)
+            self.scale_order.set(self.fir_taps if self.fir_taps else 65)
+            self.var_order_val.set(str(int(self.scale_order.get())))
+        else:
+            self.filter_family = 'IIR'
+            self.lbl_response_heading.config(text="Response Approximation:")
+            iir_responses = ["Butterworth", "Chebyshev I", "Chebyshev II", "Bessel"]
+            self.cb_rtype.config(values=iir_responses)
+            if self.var_response_type.get() not in iir_responses:
+                self.var_response_type.set("Butterworth")
+            self.lbl_order_title.config(text="Order:")
+            self.scale_order.config(from_=1, to=10)
+            self.scale_order.set(self.order if self.order <= 10 else 4)
+            self.var_order_val.set(str(int(self.scale_order.get())))
+
+        self._update_dynamic_param_visibility()
+        self.recalculate_filter()
+        self.run_test_signal()
+
+    def _on_filter_type_changed(self, event=None):
+        raw = self.var_filter_type.get()
+        if "BSF" in raw:
+            self.filter_type = 'BSF'
+        elif "BPF" in raw:
+            self.filter_type = 'BPF'
+        elif "HPF" in raw:
+            self.filter_type = 'HPF'
+        else:
+            self.filter_type = 'LPF'
+
+        is_band = self.filter_type in ('BPF', 'BSF')
+        if is_band:
+            self.lbl_fc2.pack(anchor='w')
+            self.f2_row.pack(fill=tk.X, pady=(2, 2))
+            self.scale_fc2.pack(fill=tk.X, pady=(0, 8))
+        else:
+            self.lbl_fc2.pack_forget()
+            self.f2_row.pack_forget()
+            self.scale_fc2.pack_forget()
+
+        self.recalculate_filter()
+        self.run_test_signal()
+
     def _on_order_scale(self, val):
-        self.order = int(round(float(val)))
-        self.var_order_val.set(str(self.order))
+        num = int(round(float(val)))
+        if self.filter_family == 'FIR':
+            if num % 2 == 0:
+                num += 1
+            self.fir_taps = num
+            self.var_order_val.set(f"{num} taps (ord {num-1})")
+        else:
+            self.order = num
+            self.var_order_val.set(str(self.order))
+
         if getattr(self, '_initialized', False):
             self.recalculate_filter()
             self.run_test_signal()
@@ -485,21 +568,32 @@ class FilterDesignApp(tk.Tk):
             self.audio_engine.set_sample_rate(self.sample_rate)
         self.recalculate_filter()
 
-    def _on_param_changed(self, event=None):
-        self.response_type = self.var_response_type.get()
-
-        # Update visibility of ripple / stopband entries
+    def _update_dynamic_param_visibility(self):
         self.lbl_ripple.pack_forget()
         self.entry_ripple.pack_forget()
         self.lbl_stopband.pack_forget()
         self.entry_stopband.pack_forget()
+        self.lbl_kaiser.pack_forget()
+        self.entry_kaiser.pack_forget()
 
-        if self.response_type == 'Chebyshev I':
-            self.lbl_ripple.pack(anchor='w')
-            self.entry_ripple.pack(fill=tk.X, pady=(2, 6))
-        elif self.response_type == 'Chebyshev II':
-            self.lbl_stopband.pack(anchor='w')
-            self.entry_stopband.pack(fill=tk.X, pady=(2, 6))
+        if self.filter_family == 'IIR':
+            if self.response_type == 'Chebyshev I':
+                self.lbl_ripple.pack(anchor='w')
+                self.entry_ripple.pack(fill=tk.X, pady=(2, 6))
+            elif self.response_type == 'Chebyshev II':
+                self.lbl_stopband.pack(anchor='w')
+                self.entry_stopband.pack(fill=tk.X, pady=(2, 6))
+        else: # FIR
+            if 'kaiser' in self.response_type.lower():
+                self.lbl_kaiser.pack(anchor='w')
+                self.entry_kaiser.pack(fill=tk.X, pady=(2, 6))
+
+    def _on_param_changed(self, event=None):
+        self.response_type = self.var_response_type.get()
+        if self.filter_family == 'FIR':
+            self.fir_window = self.response_type
+
+        self._update_dynamic_param_visibility()
 
         try:
             self.ripple_db = float(self.entry_ripple.get())
@@ -510,6 +604,11 @@ class FilterDesignApp(tk.Tk):
             self.stopband_db = float(self.entry_stopband.get())
         except ValueError:
             self.stopband_db = 40.0
+
+        try:
+            self.kaiser_beta = float(self.entry_kaiser.get())
+        except ValueError:
+            self.kaiser_beta = 5.0
 
         self.recalculate_filter()
         self.run_test_signal()
@@ -591,16 +690,27 @@ class FilterDesignApp(tk.Tk):
     # --- Core Calculation & UI Update ---
     def recalculate_filter(self):
         try:
-            self.current_filter = DigitalFilter(
-                filter_type=self.filter_type,
-                response_type=self.response_type,
-                order=self.order,
-                sample_rate=self.sample_rate,
-                f_cutoff=self.f_cutoff,
-                f_cutoff2=self.f_cutoff2,
-                ripple_db=self.ripple_db,
-                stopband_db=self.stopband_db
-            )
+            if self.filter_family == 'FIR':
+                self.current_filter = FIRFilter(
+                    filter_type=self.filter_type,
+                    num_taps=self.fir_taps,
+                    sample_rate=self.sample_rate,
+                    f_cutoff=self.f_cutoff,
+                    f_cutoff2=self.f_cutoff2,
+                    window_name=self.fir_window,
+                    kaiser_beta=self.kaiser_beta
+                )
+            else:
+                self.current_filter = DigitalFilter(
+                    filter_type=self.filter_type,
+                    response_type=self.response_type,
+                    order=self.order,
+                    sample_rate=self.sample_rate,
+                    f_cutoff=self.f_cutoff,
+                    f_cutoff2=self.f_cutoff2,
+                    ripple_db=self.ripple_db,
+                    stopband_db=self.stopband_db
+                )
         except Exception as e:
             messagebox.showerror("Filter Design Error", str(e))
             return
@@ -627,10 +737,15 @@ class FilterDesignApp(tk.Tk):
         )
 
         # Update banner status
-        biquad_count = len(self.current_filter.sections)
-        self.lbl_stats.config(
-            text=f"Sections: {biquad_count} Biquad(s) | Sample Rate: {int(self.sample_rate)} Hz | Total Poles: {biquad_count * 2}"
-        )
+        if self.filter_family == 'FIR':
+            self.lbl_stats.config(
+                text=f"FIR Type I | Taps: {self.current_filter.num_taps} | Order: {self.current_filter.order} | Delay: {(self.current_filter.num_taps-1)/2:.1f} smp (Linear Phase)"
+            )
+        else:
+            biquad_count = len(self.current_filter.sections)
+            self.lbl_stats.config(
+                text=f"Sections: {biquad_count} Biquad(s) | Sample Rate: {int(self.sample_rate)} Hz | Total Poles: {biquad_count * 2}"
+            )
 
         # Update real-time continuous audio engine
         if hasattr(self, 'audio_engine'):
@@ -655,26 +770,38 @@ class FilterDesignApp(tk.Tk):
         txt = []
         txt.append("==========================================================================")
         txt.append(f"FILTER SPECIFICATION SUMMARY:")
+        txt.append(f"  Family:         {getattr(self.current_filter, 'filter_family', 'IIR')}")
         txt.append(f"  Type:           {self.current_filter.filter_type} ({self.current_filter.response_type})")
         txt.append(f"  Order:          {self.current_filter.order}")
+        if getattr(self.current_filter, 'filter_family', 'IIR') == 'FIR':
+            txt.append(f"  Taps (Length):  {self.current_filter.num_taps}")
+            txt.append(f"  Linear Phase:   Yes (Constant Group Delay = {(self.current_filter.num_taps - 1) / 2.0:.1f} samples)")
         txt.append(f"  Sample Rate:    {self.current_filter.sample_rate:.1f} Hz")
         if self.filter_type in ('LPF', 'HPF'):
             txt.append(f"  Cutoff Freq:    {self.current_filter.f_cutoff:.2f} Hz")
         else:
             txt.append(f"  Band Cutoffs:   {self.current_filter.f_cutoff:.2f} Hz -> {self.current_filter.f_cutoff2:.2f} Hz")
-        txt.append(f"  Total Sections: {len(self.current_filter.sections)} Biquads")
+        if getattr(self.current_filter, 'filter_family', 'IIR') == 'IIR':
+            txt.append(f"  Total Sections: {len(self.current_filter.sections)} Biquads")
         txt.append("==========================================================================\n")
 
-        txt.append("CASCADED SECOND-ORDER SECTIONS (BIQUADS):")
-        txt.append("H(z) = prod_k [ (b0_k + b1_k*z^-1 + b2_k*z^-2) / (1 + a1_k*z^-1 + a2_k*z^-2) ]\n")
-        for i, sec in enumerate(self.current_filter.sections):
-            txt.append(f"--- Section {i + 1} ---")
-            txt.append(f"  b0 = {sec.b0:+.10e}")
-            txt.append(f"  b1 = {sec.b1:+.10e}")
-            txt.append(f"  b2 = {sec.b2:+.10e}")
-            txt.append(f"  a0 = 1.0000000000e+00 (normalized)")
-            txt.append(f"  a1 = {sec.a1:+.10e}")
-            txt.append(f"  a2 = {sec.a2:+.10e}\n")
+        if getattr(self.current_filter, 'filter_family', 'IIR') == 'IIR':
+            txt.append("CASCADED SECOND-ORDER SECTIONS (BIQUADS):")
+            txt.append("H(z) = prod_k [ (b0_k + b1_k*z^-1 + b2_k*z^-2) / (1 + a1_k*z^-1 + a2_k*z^-2) ]\n")
+            for i, sec in enumerate(self.current_filter.sections):
+                txt.append(f"--- Section {i + 1} ---")
+                txt.append(f"  b0 = {sec.b0:+.10e}")
+                txt.append(f"  b1 = {sec.b1:+.10e}")
+                txt.append(f"  b2 = {sec.b2:+.10e}")
+                txt.append(f"  a0 = 1.0000000000e+00 (normalized)")
+                txt.append(f"  a1 = {sec.a1:+.10e}")
+                txt.append(f"  a2 = {sec.a2:+.10e}\n")
+        else:
+            txt.append("FINITE IMPULSE RESPONSE (FIR) COEFFICIENTS:")
+            txt.append("H(z) = sum_{n=0}^{N-1} h[n] * z^{-n}\n")
+            for i, tap in enumerate(self.current_filter.taps):
+                txt.append(f"  h[{i:3d}] = {tap:+.10e}")
+            txt.append("")
 
         b_poly, a_poly = self.current_filter.get_direct_form_coefficients()
         txt.append("==========================================================================")
@@ -1021,29 +1148,34 @@ class FilterDesignApp(tk.Tk):
             return
         fpath = filedialog.asksaveasfilename(defaultextension=".json",
                                              filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")],
-                                             initialfile="filter_biquads.json")
+                                             initialfile="filter_coefficients.json")
         if fpath:
-            sections_data = []
-            for i, sec in enumerate(self.current_filter.sections):
-                sections_data.append({
-                    "section": i + 1,
-                    "b0": sec.b0, "b1": sec.b1, "b2": sec.b2,
-                    "a0": sec.a0, "a1": sec.a1, "a2": sec.a2
-                })
             b_poly, a_poly = self.current_filter.get_direct_form_coefficients()
             data = {
+                "family": getattr(self.current_filter, 'filter_family', 'IIR'),
                 "filter_type": self.filter_type,
                 "response_type": self.response_type,
                 "order": self.order,
                 "sample_rate": self.sample_rate,
                 "f_cutoff": self.f_cutoff,
                 "f_cutoff2": self.f_cutoff2,
-                "sections": sections_data,
                 "direct_form": {
                     "b": b_poly,
                     "a": a_poly
                 }
             }
+            if getattr(self.current_filter, 'filter_family', 'IIR') == 'IIR':
+                sections_data = []
+                for i, sec in enumerate(self.current_filter.sections):
+                    sections_data.append({
+                        "section": i + 1,
+                        "b0": sec.b0, "b1": sec.b1, "b2": sec.b2,
+                        "a0": sec.a0, "a1": sec.a1, "a2": sec.a2
+                    })
+                data["sections"] = sections_data
+            else:
+                data["taps"] = list(self.current_filter.taps)
+                data["num_taps"] = self.current_filter.num_taps
             with open(fpath, "w", encoding="utf-8") as f:
                 import json
                 json.dump(data, f, indent=2)
