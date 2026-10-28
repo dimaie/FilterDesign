@@ -172,6 +172,20 @@ class TestFilterEngine(unittest.TestCase):
             out = fir.process_block([0.5, -0.5, 0.2])
             self.assertEqual(len(out), 3)
 
+        # Test FIR BPF frequency response: with sufficient taps (e.g. 255 taps for 257 Hz),
+        # both stopbands (below fc1 and above fc2) are deeply attenuated while passband is ~0 dB.
+        fir_bpf = FIRFilter('BPF', 255, 48000, 257.2, f_cutoff2=4000, window_name='Hamming')
+        mags, _, _ = fir_bpf.frequency_response([10.0, 1000.0, 12000.0])
+        self.assertLess(mags[0], -20.0, f"BPF low stopband gain should be attenuated, got {mags[0]:.1f} dB")
+        self.assertGreater(mags[1], -1.0, f"Passband gain should be near 0 dB, got {mags[1]:.1f} dB")
+        self.assertLess(mags[2], -20.0, f"BPF high stopband gain should be attenuated, got {mags[2]:.1f} dB")
+
+        # Test FIR HPF rejects low frequencies
+        fir_hpf = FIRFilter('HPF', 129, 48000, 1000.0, window_name='Hamming')
+        mags_hpf, _, _ = fir_hpf.frequency_response([10.0, 5000.0])
+        self.assertLess(mags_hpf[0], -20.0)
+        self.assertGreater(mags_hpf[1], -1.0)
+
     def test_fir_comprehensive_windows(self):
         for w in FIRFilter.KNOWN_WINDOWS:
             fir = FIRFilter('LPF', 33, 48000, 1200, window_name=w,
@@ -186,6 +200,25 @@ class TestFilterEngine(unittest.TestCase):
             # Verify linear phase constant group delay
             for g in gd:
                 self.assertAlmostEqual(g, 16.0, places=4)
+
+    def test_check_criteria_match(self):
+        # FIR with 65 taps at 45.1 Hz cannot resolve cutoff -> Mismatch expected
+        fir_unresolved = FIRFilter('LPF', 65, 48000, 45.1, window_name='Hamming')
+        matched, reason = fir_unresolved.check_criteria_match(45.1)
+        self.assertFalse(matched)
+        self.assertTrue("Under-resolved" in reason or "exceeds cutoff" in reason)
+
+        # FIR with 65 taps at 2000 Hz is well resolved -> Satisfied expected
+        fir_resolved = FIRFilter('LPF', 65, 48000, 2000.0, window_name='Hamming')
+        matched, reason = fir_resolved.check_criteria_match(2000.0)
+        self.assertTrue(matched)
+        self.assertEqual(reason, "")
+
+        # IIR at 45.1 Hz has feedback poles and can easily resolve 45 Hz -> Satisfied expected
+        iir_resolved = DigitalFilter('LPF', 'Butterworth', 4, 48000, 45.1)
+        matched, reason = iir_resolved.check_criteria_match(45.1)
+        self.assertTrue(matched)
+        self.assertEqual(reason, "")
 
 
 class TestSignalTestbench(unittest.TestCase):

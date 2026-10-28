@@ -360,8 +360,11 @@ class FilterDesignApp(tk.Tk):
         cb_test_sig.pack(side=tk.LEFT, padx=(0, 12))
         cb_test_sig.bind("<<ComboboxSelected>>", self._on_test_signal_param_changed)
 
-        ttk.Label(r1, text="Input Freq 1 (Hz):", style='Card.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        # Initialize frequency string variables before widgets to prevent early callback race conditions
         self.var_test_f1 = tk.StringVar(value="500.0")
+        self.var_test_f2 = tk.StringVar(value="5000.0")
+
+        ttk.Label(r1, text="Input Freq 1 (Hz):", style='Card.TLabel').pack(side=tk.LEFT, padx=(0, 4))
         self.entry_test_f1 = ttk.Entry(r1, textvariable=self.var_test_f1, width=7)
         self.entry_test_f1.pack(side=tk.LEFT, padx=(0, 4))
         self.entry_test_f1.bind("<Return>", self._on_entry_test_f1)
@@ -374,7 +377,6 @@ class FilterDesignApp(tk.Tk):
 
         self.lbl_test_f2 = ttk.Label(r1, text="Freq 2 / End (Hz):", style='Card.TLabel')
         self.lbl_test_f2.pack(side=tk.LEFT, padx=(0, 4))
-        self.var_test_f2 = tk.StringVar(value="5000.0")
         self.entry_test_f2 = ttk.Entry(r1, textvariable=self.var_test_f2, width=7)
         self.entry_test_f2.pack(side=tk.LEFT, padx=(0, 8))
         self.entry_test_f2.bind("<Return>", self._on_test_signal_param_changed)
@@ -520,9 +522,10 @@ class FilterDesignApp(tk.Tk):
             self.cb_rtype.config(values=fir_windows)
             if self.var_response_type.get() not in fir_windows:
                 self.var_response_type.set("Hamming")
+            self.fir_window = self.var_response_type.get()
             self.lbl_order_title.config(text="Taps (Length):")
-            # For FIR, order slider controls taps 7 to 255 (odd)
-            self.scale_order.config(from_=7, to=255)
+            # For FIR, order slider controls taps 7 to 2047 (odd)
+            self.scale_order.config(from_=7, to=2047)
             self.scale_order.set(self.fir_taps if self.fir_taps else 65)
             self.var_order_val.set(f"{int(self.scale_order.get())} taps (ord {int(self.scale_order.get())-1})")
         else:
@@ -533,36 +536,13 @@ class FilterDesignApp(tk.Tk):
             self.cb_rtype.config(values=iir_responses)
             if self.var_response_type.get() not in iir_responses:
                 self.var_response_type.set("Butterworth")
+            self.response_type = self.var_response_type.get()
             self.lbl_order_title.config(text="Order:")
             self.scale_order.config(from_=1, to=10)
             self.scale_order.set(self.order if self.order <= 10 else 4)
             self.var_order_val.set(str(int(self.scale_order.get())))
 
         self._update_dynamic_param_visibility()
-        self.recalculate_filter()
-        self.run_test_signal()
-
-    def _on_filter_type_changed(self, event=None):
-        raw = self.var_filter_type.get()
-        if "BSF" in raw:
-            self.filter_type = 'BSF'
-        elif "BPF" in raw:
-            self.filter_type = 'BPF'
-        elif "HPF" in raw:
-            self.filter_type = 'HPF'
-        else:
-            self.filter_type = 'LPF'
-
-        is_band = self.filter_type in ('BPF', 'BSF')
-        if is_band:
-            self.lbl_fc2.pack(anchor='w')
-            self.f2_row.pack(fill=tk.X, pady=(2, 2))
-            self.scale_fc2.pack(fill=tk.X, pady=(0, 8))
-        else:
-            self.lbl_fc2.pack_forget()
-            self.f2_row.pack_forget()
-            self.scale_fc2.pack_forget()
-
         self.recalculate_filter()
         self.run_test_signal()
 
@@ -862,6 +842,15 @@ class FilterDesignApp(tk.Tk):
         mags, phases, gd = self.current_filter.frequency_response(freqs)
 
         # Update Canvas
+        # Check if filter satisfies entered design criteria
+        is_matched = True
+        mismatch_reason = ""
+        if hasattr(self.current_filter, 'check_criteria_match'):
+            is_matched, mismatch_reason = self.current_filter.check_criteria_match(
+                self.f_cutoff, self.f_cutoff2 if self.filter_type in ('BPF', 'BSF') else None
+            )
+
+        # Update Canvas
         fc2_val = self.f_cutoff2 if self.filter_type in ('BPF', 'BSF') else None
         self.canvas_response.set_filter_state(
             filter_type=self.filter_type,
@@ -870,18 +859,28 @@ class FilterDesignApp(tk.Tk):
             sample_rate=self.sample_rate,
             freqs=freqs,
             mags=mags,
-            phases=phases
+            phases=phases,
+            criteria_met=is_matched,
+            mismatch_reason=mismatch_reason
         )
 
         # Update banner status
-        if self.filter_family == 'FIR':
+        if not is_matched and mismatch_reason:
+            short_reason = mismatch_reason.split(".")[0]
             self.lbl_stats.config(
-                text=f"FIR Type I | Taps: {self.current_filter.num_taps} | Order: {self.current_filter.order} | Delay: {(self.current_filter.num_taps-1)/2:.1f} smp (Linear Phase)"
+                text=f"⚠️ {short_reason}.",
+                foreground='#cf222e'
+            )
+        elif self.filter_family == 'FIR':
+            self.lbl_stats.config(
+                text=f"FIR Type I | Taps: {self.current_filter.num_taps} | Order: {self.current_filter.order} | Delay: {(self.current_filter.num_taps-1)/2:.1f} smp (Linear Phase)",
+                foreground='#0969da'
             )
         else:
             biquad_count = len(self.current_filter.sections)
             self.lbl_stats.config(
-                text=f"Sections: {biquad_count} Biquad(s) | Sample Rate: {int(self.sample_rate)} Hz | Total Poles: {biquad_count * 2}"
+                text=f"Sections: {biquad_count} Biquad(s) | Sample Rate: {int(self.sample_rate)} Hz | Total Poles: {biquad_count * 2}",
+                foreground='#0969da'
             )
 
         # Update real-time continuous audio engine
@@ -993,25 +992,29 @@ class FilterDesignApp(tk.Tk):
         f = self._slider_pos_to_hz(float(val))
         self.entry_test_f1.delete(0, tk.END)
         self.entry_test_f1.insert(0, f"{f:.1f}")
-        self._on_test_signal_param_changed()
+        if getattr(self, '_initialized', False):
+            self._on_test_signal_param_changed()
 
     def _on_entry_test_f1(self, event=None):
         try:
             val = float(self.entry_test_f1.get())
             self._update_slider_pos_from_hz(self.scale_test_f1, val)
-            self._on_test_signal_param_changed()
+            if getattr(self, '_initialized', False):
+                self._on_test_signal_param_changed()
         except ValueError:
             pass
 
     def _on_test_signal_param_changed(self, event=None):
+        if not getattr(self, '_initialized', False):
+            return
         sig_type = self.var_test_sig.get()
         try:
             f1 = float(self.var_test_f1.get())
-        except ValueError:
+        except (ValueError, AttributeError):
             f1 = 500.0
         try:
             f2 = float(self.var_test_f2.get())
-        except ValueError:
+        except (ValueError, AttributeError):
             f2 = 5000.0
         if hasattr(self, 'audio_engine'):
             self.audio_engine.set_signal_params(signal_type=sig_type, freq1=f1, freq2=f2)

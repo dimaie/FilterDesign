@@ -45,6 +45,10 @@ class InteractiveResponseCanvas(tk.Canvas):
         self.drag_target: Optional[str] = None  # 'fc1', 'fc2', or None
         self.hover_info: Optional[Tuple[float, float, Optional[float]]] = None
 
+        # Design criteria validation state
+        self.criteria_met = True
+        self.mismatch_reason = ""
+
         # Margins for axes
         self.margin_left = 55
         self.margin_right = 50
@@ -61,8 +65,12 @@ class InteractiveResponseCanvas(tk.Canvas):
 
     def set_filter_state(self, filter_type: str, fc1: float, fc2: Optional[float],
                          sample_rate: float, freqs: List[float], mags: List[float],
-                         phases: List[float]):
+                         phases: List[float],
+                         criteria_met: bool = True,
+                         mismatch_reason: str = ""):
         """Update filter state and trigger re-draw."""
+        self.criteria_met = criteria_met
+        self.mismatch_reason = mismatch_reason
         self.filter_type = filter_type.upper()
         self.has_two_cutoffs = (self.filter_type in ('BPF', 'BSF'))
         self.f_max = sample_rate / 2.0
@@ -218,10 +226,14 @@ class InteractiveResponseCanvas(tk.Canvas):
         plot_w = w - self.margin_left - self.margin_right
         plot_h = h - self.margin_top - self.margin_bottom
 
-        # Plot background
+        # Plot background: clean white when satisfied, soft warm amber tint when criteria mismatched
+        bg_fill = '#ffffff' if self.criteria_met else '#fff6f0'
+        border_outline = '#d0d7de' if self.criteria_met else '#cf222e'
+        border_width = 1 if self.criteria_met else 2
+
         self.create_rectangle(self.margin_left, self.margin_top,
                               self.margin_left + plot_w, self.margin_top + plot_h,
-                              fill='#ffffff', outline='#d0d7de', width=1)
+                              fill=bg_fill, outline=border_outline, width=border_width)
 
         # Draw Passband/Stopband Shading
         self._draw_zones(plot_h)
@@ -239,6 +251,18 @@ class InteractiveResponseCanvas(tk.Canvas):
 
         # Draw Cutoff Draggable Cursors
         self._draw_cutoffs(plot_h)
+
+        # Draw Criteria Mismatch Warning Banner inside plot
+        if not self.criteria_met and self.mismatch_reason:
+            banner_y = self.margin_top + 8
+            banner_h = 22
+            banner_w = min(plot_w - 16, max(380, len(self.mismatch_reason) * 6 + 40))
+            self.create_rectangle(self.margin_left + 8, banner_y,
+                                  self.margin_left + 8 + banner_w, banner_y + banner_h,
+                                  fill='#fff0e6', outline='#cf222e', width=1)
+            self.create_text(self.margin_left + 16, banner_y + banner_h / 2,
+                             text=f"⚠️ {self.mismatch_reason}",
+                             fill='#a40e26', font=('Segoe UI', 8, 'bold'), anchor='w')
 
         # Draw Tooltip
         if self.hover_info:
@@ -259,23 +283,25 @@ class InteractiveResponseCanvas(tk.Canvas):
         """Draw subtle translucent background shading for passbands."""
         top = self.margin_top
         bot = self.margin_top + plot_h
+        passband_fill = '#e8f5e9' if self.criteria_met else '#ffe8dc'
+        stopband_fill = '#ffebee' if self.criteria_met else '#ffdcd6'
 
         if self.filter_type == 'LPF':
             x1 = self.margin_left
             x2 = self.f_to_x(self.fc1)
-            self.create_rectangle(x1, top, x2, bot, fill='#e8f5e9', outline='', width=0)
+            self.create_rectangle(x1, top, x2, bot, fill=passband_fill, outline='', width=0)
         elif self.filter_type == 'HPF':
             x1 = self.f_to_x(self.fc1)
             x2 = self.winfo_width() - self.margin_right
-            self.create_rectangle(x1, top, x2, bot, fill='#e8f5e9', outline='', width=0)
+            self.create_rectangle(x1, top, x2, bot, fill=passband_fill, outline='', width=0)
         elif self.filter_type == 'BPF':
             x1 = self.f_to_x(self.fc1)
             x2 = self.f_to_x(self.fc2)
-            self.create_rectangle(x1, top, x2, bot, fill='#e8f5e9', outline='', width=0)
+            self.create_rectangle(x1, top, x2, bot, fill=passband_fill, outline='', width=0)
         elif self.filter_type == 'BSF':
             x1 = self.f_to_x(self.fc1)
             x2 = self.f_to_x(self.fc2)
-            self.create_rectangle(x1, top, x2, bot, fill='#ffebee', outline='', width=0)
+            self.create_rectangle(x1, top, x2, bot, fill=stopband_fill, outline='', width=0)
 
     def _draw_grid(self, plot_w, plot_h):
         # dB Grid (Horizontal)

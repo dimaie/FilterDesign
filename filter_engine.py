@@ -696,6 +696,19 @@ class DigitalFilter:
 
         return "\n".join(c_code)
 
+    def check_criteria_match(self, fc1: float, fc2: Optional[float] = None) -> Tuple[bool, str]:
+        """Validate whether the synthesized IIR filter satisfies design criteria and stability."""
+        fs = self.sample_rate
+        for i, sec in enumerate(self.sections):
+            # Jury's stability criterion for second-order biquad
+            if abs(sec.a2) >= 1.0 or (1.0 + sec.a1 + sec.a2) <= 0 or (1.0 - sec.a1 + sec.a2) <= 0:
+                return False, f"Biquad section #{i+1} is unstable (poles lie on/outside unit circle)."
+        if fc1 >= (fs / 2.0) * 0.49:
+            return False, f"Cutoff ({fc1:.0f} Hz) is too close to Nyquist limit ({fs/2:.0f} Hz)."
+        if self.filter_type in ('BPF', 'BSF') and fc2 is not None and fc1 >= fc2:
+            return False, f"Cutoff 1 ({fc1:.0f} Hz) must be strictly less than Cutoff 2 ({fc2:.0f} Hz)."
+        return True, ""
+
 
 class FIRFilter:
     """
@@ -770,7 +783,7 @@ class FIRFilter:
         n = int(num_taps)
         if n % 2 == 0:
             n += 1
-        self.num_taps = max(3, min(511, n))
+        self.num_taps = max(3, min(2047, n))
         self.order = self.num_taps - 1
         self.sample_rate = float(sample_rate)
         self.f_cutoff = float(f_cutoff)
@@ -915,40 +928,38 @@ class FIRFilter:
         for n in range(N):
             k = n - M
             if abs(k) < 1e-9:
-                sinc1 = wc1 / math.pi
-                sinc2 = wc2 / math.pi
+                s1 = wc1 / math.pi
+                s2 = wc2 / math.pi
+                delta = 1.0
             else:
-                sinc1 = math.sin(wc1 * k) / (math.pi * k)
-                sinc2 = math.sin(wc2 * k) / (math.pi * k)
+                s1 = math.sin(wc1 * k) / (math.pi * k)
+                s2 = math.sin(wc2 * k) / (math.pi * k)
+                delta = 0.0
 
             if self.filter_type == 'LPF':
-                ideal = sinc1
+                ideal = s1
             elif self.filter_type == 'HPF':
-                delta = 1.0 if abs(k) < 1e-9 else 0.0
-                ideal = delta - sinc1
+                ideal = delta - s1
             elif self.filter_type == 'BPF':
-                ideal = sinc2 - sinc1
+                ideal = s2 - s1
             elif self.filter_type in ('BSF', 'NOTCH'):
-                delta = 1.0 if abs(k) < 1e-9 else 0.0
-                ideal = delta - (sinc2 - sinc1)
+                ideal = delta - (s2 - s1)
             else:
-                ideal = sinc1
+                ideal = s1
 
             h[n] = ideal * w[n]
 
-        # 3. Normalize Gain at Center of Passband
-        if self.filter_type in ('LPF', 'BSF'):
-            eval_f = 0.0
-        elif self.filter_type == 'HPF':
-            eval_f = nyquist * 0.99
-        else:  # BPF
-            eval_f = math.sqrt(f1 * f2)
+        # 3. Global Peak Normalization across full spectrum
+        # Using Type I linear-phase symmetry: H(w) = e^(-j*w*M) * [h[M] + 2*sum(h[M-k]*cos(w*k))]
+        # Peak normalization guarantees maximum gain across all frequencies is exactly 0 dB (1.0).
+        pts = 256
+        mid_idx = int(M)
+        h_center = h[mid_idx]
+        h_sym = [2.0 * h[mid_idx - k] for k in range(1, mid_idx + 1)]
+        peak = max(abs(h_center + sum(h_sym[k - 1] * math.cos((math.pi * i / pts) * k) for k in range(1, mid_idx + 1))) for i in range(pts))
 
-        w_eval = 2.0 * math.pi * eval_f / fs
-        H_eval = sum(h[n] * cmath.exp(-1j * w_eval * n) for n in range(N))
-        gain = abs(H_eval)
-        if gain > 1e-9:
-            h = [val / gain for val in h]
+        if peak > 1e-9:
+            h = [val / peak for val in h]
 
         self.taps = h
 
@@ -1085,3 +1096,48 @@ class FIRFilter:
         lines.append("}")
         lines.append("#endif\n")
         return "\n".join(lines)
+
+    def check_criteria_match(self, fc1: float, fc2: Optional[float] = None) -> Tuple[bool, str]:
+        """Validate whether the synthesized FIR filter satisfies the design criteria."""
+        fs = self.sample_rate
+        N = self.num_taps
+        c_win = 3.3
+        delta_f = c_win * fs / N
+        ftype = self.filter_type
+
+        if ftype == 'LPF':
+            mags, _, _ = self.frequency_response([fc1])
+            mag_fc = mags[0]
+            if mag_fc > -2.0:
+                req = int(math.ceil(c_win * fs / max(1.0, fc1)))
+                if req % 2 == 0:
+                    req += 1
+                return False, f"At cutoff ({fc1:.1f} Hz), response is {mag_fc:.1f} dB (expected <= -3 dB). Trans. width (Δf ≈ {int(delta_f)} Hz) exceeds cutoff. Need ~{req:,} taps or switch to IIR."
+        elif ftype == 'HPF':
+            mags, _, _ = self.frequency_response([10.0, fc1])
+            mag_dc, mag_fc = mags[0], mags[1]
+            if mag_fc > -2.0 or mag_dc > -6.0:
+                req = int(math.ceil(c_win * fs / max(1.0, fc1)))
+                if req % 2 == 0:
+                    req += 1
+                return False, f"At cutoff ({fc1:.1f} Hz), response is {mag_fc:.1f} dB (expected <= -3 dB). Low frequencies are not attenuated. Need ~{req:,} taps or switch to IIR."
+        elif ftype == 'BPF':
+            fc2_val = fc2 if fc2 is not None else fc1 * 2.0
+            bw = max(1.0, fc2_val - fc1)
+            mags, _, _ = self.frequency_response([10.0, fc1, fc2_val])
+            req = int(math.ceil(c_win * fs / min(fc1, bw)))
+            if req % 2 == 0:
+                req += 1
+            if bw < 0.6 * delta_f or mags[1] > -2.0 or mags[2] > -2.0 or mags[0] > -6.0:
+                return False, f"Passband ({fc1:.0f}–{fc2_val:.0f} Hz, {int(bw)} Hz wide) is narrower than transition width (Δf ≈ {int(delta_f)} Hz). Need ~{req:,} taps or switch to IIR."
+        elif ftype in ('BSF', 'NOTCH'):
+            fc2_val = fc2 if fc2 is not None else fc1 * 2.0
+            f_mid = math.sqrt(fc1 * fc2_val)
+            mags, _, _ = self.frequency_response([f_mid])
+            if mags[0] > -6.0:
+                req = int(math.ceil(c_win * fs / max(1.0, fc2_val - fc1)))
+                if req % 2 == 0:
+                    req += 1
+                return False, f"Notch ({fc1:.0f}–{fc2_val:.0f} Hz) center attenuation is only {mags[0]:.1f} dB (expected <= -12 dB). Need ~{req:,} taps or switch to IIR."
+
+        return True, ""
